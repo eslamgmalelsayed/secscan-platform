@@ -1,0 +1,13 @@
+{
+  "name": "secscan-platform",
+  "private": true,
+  "workspaces": ["packages/*", "apps/*"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "dev:api": "npm run dev -w @secscan/api",
+    "dev:web": "npm run dev -w @secscan/web"
+  },
+  "engines": { "node": ">=22" }
+}
