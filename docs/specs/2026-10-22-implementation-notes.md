@@ -8,14 +8,19 @@
 
 | الحزمة | الدور | المواصفة | اختبارات |
 |---|---|---|---|
-| `@secscan/shared` | أنواع `Finding`/`Engagement`/`ReportInput` (zod) وأدوات الملخص | §9 | 4 |
+| `@secscan/shared` | أنواع `Finding`/`Engagement`/`ReportInput` (zod)، ملخصات، **CVSS v3.1**، **ربط الأطر** (ECC/OWASP/CWE/ASVS/ISO/NIST) | §9 | 10 |
 | `@secscan/engine` | البوابة والـ scope والتصنيف والتطبيع، authz-diff، transport، sessions، telemetry، scanner | §3/§6/§7/§8/§9/§10/§11 | 24 |
 | `@secscan/importers` | HAR + OpenAPI → flows | §11 | 3 |
 | `@secscan/report` | تقرير AR/EN من `ReportInput` | §9 | 3 |
-| `@secscan/api` | دورة حياة التفويض، سجل append-only، بوابة المعمل (§3.2)، تشغيل فحص مُبوَّب، تقارير — + طبقة NestJS/Fastify | §3/§6/§8/§9 | 5 vitest + 7 HTTP smoke |
+| `@secscan/checks` | Scorecard سلبي + فحوصات إعداد آمنة (CORS/open-redirect) + كشف نشط غير مدمّر (reflection/SQLi) + JWT، بـ CVSS وربط أطر | §5/§9 | 2 |
+| `@secscan/api` | دورة حياة التفويض، سجل append-only، بوابة المعمل (§3.2)، فحص مُبوَّب = authz + checks، تقارير — + طبقة NestJS/Fastify | §3/§6/§8/§9 | 5 vitest + 7 HTTP smoke |
 | `@secscan/workers` | منطق Discovery/Scan/Validator على واجهة Queue | §4 | 3 |
 
-**الإجمالي:** 42 اختبار vitest + 7 HTTP smoke.
+**الإجمالي:** 50 اختبار vitest + 7 HTTP smoke.
+
+## مبدأ الاختبار: قوي وغير مدمّر
+
+الفحوصات النشطة **كشفية غير مدمّرة بالتصميم** (§8 قاعدة #4): علامات حميدة للانعكاس، وفروق قراءة للـ SQLi (boolean/error) — **بدون payload استغلال، بدون سحب بيانات، بدون عمليات مدمّرة**. الانعكاس (XSS مرشّح) يذهب دائمًا لطابور المراجعة البشرية؛ الـ SQLi المنطقي المؤكَّد بالتكرار يُعتمد. الأفعال المغيّرة للحالة تبقى ممنوعة إلا على staging بإذن صريح. دمج أدوات الاستغلال الثقيلة (sqlmap-style) يبقى لوثيقة المحرك المنفصلة مع شريك أمني (§4).
 
 ## القواعد غير القابلة للتفاوض — أين تُطبَّق في الكود
 

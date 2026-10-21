@@ -8,7 +8,7 @@
  * compare. A finding requires a denied/anonymous reference (so a public page
  * is not mistaken for a bypass) and deterministic reproduction.
  */
-import { Finding, type Severity } from '@secscan/shared';
+import { Finding, type Severity, controlsFor, cvss31, type Cvss31Metrics, type FindingCategory } from '@secscan/shared';
 import { GuardedClient } from './client';
 import type { Identity, RecordedRequest, RecordedResponse } from './http';
 import { isAnonymous } from './http';
@@ -18,6 +18,12 @@ export interface DiffConfig {
   replaysForConfirmation: number;
 }
 const DEFAULT: DiffConfig = { replaysForConfirmation: 2 };
+
+const CVSS_BY_TYPE: Record<'bola_idor' | 'cross_tenant' | 'missing_auth', Cvss31Metrics> = {
+  bola_idor:    { AV: 'N', AC: 'L', PR: 'L', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' },
+  cross_tenant: { AV: 'N', AC: 'L', PR: 'L', UI: 'N', S: 'C', C: 'H', I: 'L', A: 'N' },
+  missing_auth: { AV: 'N', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' },
+};
 
 export type AccessFindingType = 'bola_idor' | 'cross_tenant' | 'missing_auth';
 
@@ -152,11 +158,8 @@ function buildFinding(a: {
       { kind: 'request', label: 'replayed as challenger', content: `${a.reqAsOwner.method} ${a.reqAsOwner.url} as ${who(a.challenger)} -> ${a.exploit.status}` },
       { kind: 'note', label: 'grant', content: `fingerprint ${a.grantFingerprint.slice(0, 16)}…` },
     ],
-    controls: [
-      { framework: 'NCA ECC-2:2024', control: '2-2 / 2-10 (indicative, not a compliance claim)' },
-      { framework: 'OWASP API Security', control: a.type === 'missing_auth' ? 'API2:2023' : 'API1:2023' },
-      { framework: 'CWE', control: a.type === 'cross_tenant' ? 'CWE-639' : a.type === 'missing_auth' ? 'CWE-306' : 'CWE-639' },
-    ],
+    cvss: cvss31(CVSS_BY_TYPE[a.type]),
+    controls: controlsFor(a.type === 'missing_auth' ? 'missing_auth' : 'access_control'),
     source: 'engine/authz-diff',
     firstSeen: new Date().toISOString(),
   });

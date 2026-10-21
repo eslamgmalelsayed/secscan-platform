@@ -26,6 +26,7 @@ export const ControlRef = z.object({
   framework: z.string().min(1), // e.g. "NCA ECC-2:2024", "OWASP ASVS 5.0"
   control: z.string().min(1),
 });
+export type ControlRef = z.infer<typeof ControlRef>;
 
 export const Retest = z.object({
   at: z.string().datetime(),

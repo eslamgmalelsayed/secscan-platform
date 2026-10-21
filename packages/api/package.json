@@ -11,6 +11,7 @@
     "start": "node dist/http/main.js"
   },
   "dependencies": {
+    "@secscan/checks": "*",
     "@secscan/engine": "*",
     "@secscan/importers": "*",
     "@secscan/report": "*",

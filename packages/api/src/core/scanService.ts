@@ -8,6 +8,7 @@ import {
   GuardedClient, ScopeGuard, fingerprint as grantFingerprint, runAccessControlScan,
   type HostResolver, type Identity, type RecordedRequest, type Sender,
 } from '@secscan/engine';
+import { runChecks } from '@secscan/checks';
 import { AppendOnlyAuditLog } from './audit';
 import { AuthorizationService } from './authorizationService';
 import { LabPolicy } from './labPolicy';
@@ -19,6 +20,12 @@ export interface ScanRequest {
   flows: RecordedRequest[];
   identities: Identity[];
   actor: string;
+  /** Root URL for passive/scorecard checks; defaults to the grant's first target. */
+  rootUrl?: string;
+  /** Optional JWTs (from test-account material) for passive JWT analysis. */
+  tokens?: string[];
+  /** Skip the non-authz check suite (passive/config/active/jwt). */
+  skipChecks?: boolean;
 }
 
 export interface ScanServiceDeps {
@@ -65,16 +72,35 @@ export class ScanService {
       return failed;
     }
 
+    // Non-destructive check suite (passive scorecard + safe config + active
+    // detection + JWT), through the SAME guarded client, so scope still holds.
+    let checksReady = 0, checksReview = 0;
+    const findings = [...result.reportReady];
+    if (!req.skipChecks) {
+      const first = rec.grant.targets[0];
+      const rootUrl = req.rootUrl ?? `${first.scheme}://${first.host}/`;
+      const checks = await runChecks({ client, grantFingerprint: fp, rootUrl, flows: req.flows, tokens: req.tokens });
+      findings.push(...checks.reportReady);
+      checksReady = checks.reportReady.length;
+      checksReview = checks.needsReview.length;
+    }
+
+    const notTested = [...new Set([...result.notTested, ...client.refused.map((r) => `${r.decision}: ${r.reason}`)])];
     const scan: ScanRecord = {
       id, engagementId: req.engagementId, grantId: req.grantId, status: 'done',
-      findings: result.reportReady, notTested: result.notTested,
-      telemetry: { confirmedFindings: result.reportReady.length, needsReview: result.needsReview.length },
+      findings, notTested,
+      telemetry: {
+        confirmedFindings: findings.length,
+        needsReview: result.needsReview.length + checksReview,
+        authzConfirmed: result.reportReady.length,
+        checksConfirmed: checksReady,
+      },
       createdAt: new Date().toISOString(),
     };
     this.d.scans.save(scan);
     this.d.audit.append({
       actor: req.actor, action: 'scan_run', grantId: req.grantId,
-      detail: `confirmed=${result.reportReady.length} review=${result.needsReview.length} notTested=${result.notTested.length}`,
+      detail: `confirmed=${findings.length} (authz=${result.reportReady.length} checks=${checksReady}) review=${result.needsReview.length + checksReview} notTested=${notTested.length}`,
     });
     return scan;
   }
