@@ -1,0 +1,163 @@
+/**
+ * Authorization-diffing: the deterministic access-control core (Design §9, §11).
+ *
+ * A legitimate request captured as a privileged identity A is replayed under
+ * identity B (another user / tenant / anonymous). If B reproducibly receives
+ * A's privileged response, access control was not enforced. We never craft a
+ * payload — we re-send the owner's own authorized traffic, in scope, and
+ * compare. A finding requires a denied/anonymous reference (so a public page
+ * is not mistaken for a bypass) and deterministic reproduction.
+ */
+import { Finding, type Severity } from '@secscan/shared';
+import { GuardedClient } from './client';
+import type { Identity, RecordedRequest, RecordedResponse } from './http';
+import { isAnonymous } from './http';
+import { bodyDigest } from './normalize';
+
+export interface DiffConfig {
+  replaysForConfirmation: number;
+}
+const DEFAULT: DiffConfig = { replaysForConfirmation: 2 };
+
+export type AccessFindingType = 'bola_idor' | 'cross_tenant' | 'missing_auth';
+
+function looksAuthorized(r: RecordedResponse): boolean {
+  return r.status >= 200 && r.status < 300 && r.body.length > 0;
+}
+
+function digestOf(r: RecordedResponse): string {
+  const ct = r.headers['content-type'] ?? r.headers['Content-Type'] ?? '';
+  return bodyDigest(r.body, ct);
+}
+
+export class AuthorizationDiffer {
+  constructor(
+    private client: GuardedClient,
+    private grantFingerprint: string,
+    private cfg: DiffConfig = DEFAULT,
+  ) {}
+
+  private async reproduce(
+    req: RecordedRequest,
+    ident: Identity,
+    baseDigest: string,
+  ): Promise<{ matches: number; last: RecordedResponse | null }> {
+    let matches = 0;
+    let last: RecordedResponse | null = null;
+    for (let i = 0; i < this.cfg.replaysForConfirmation; i++) {
+      const resp = await this.client.send(req, ident);
+      last = resp;
+      if (looksAuthorized(resp) && digestOf(resp) === baseDigest) matches++;
+      else break; // control held at least once => not a finding
+    }
+    return { matches, last };
+  }
+
+  /** Return a confirmed Finding, or null if access control held / resource is public. */
+  async testObjectAccess(
+    reqAsOwner: RecordedRequest,
+    owner: Identity,
+    challenger: Identity,
+  ): Promise<Finding | null> {
+    const baseline = await this.client.send(reqAsOwner, owner);
+    if (!looksAuthorized(baseline)) return null;
+    const baseDigest = digestOf(baseline);
+
+    // Is the resource public (anyone gets the owner's response) or gated?
+    let anonPublic = false;
+    try {
+      const anonResp = await this.client.send(reqAsOwner, { role: 'anonymous', sessionRef: null });
+      anonPublic = looksAuthorized(anonResp) && digestOf(anonResp) === baseDigest;
+    } catch {
+      anonPublic = false; // anon refused => resource is gated
+    }
+
+    let type: AccessFindingType;
+    let severity: Severity;
+    let last: RecordedResponse | null;
+
+    if (isAnonymous(challenger)) {
+      if (!reqAsOwner.requiresAuth) return null; // don't guess on public/anon
+      const r = await this.reproduce(reqAsOwner, challenger, baseDigest);
+      if (r.matches < this.cfg.replaysForConfirmation) return null;
+      type = 'missing_auth';
+      severity = 'critical';
+      last = r.last;
+    } else {
+      if (anonPublic) return null; // same for everyone => public, not a bypass
+      const r = await this.reproduce(reqAsOwner, challenger, baseDigest);
+      if (r.matches < this.cfg.replaysForConfirmation) return null;
+      const crossTenant = !!challenger.tenant && !!owner.tenant && challenger.tenant !== owner.tenant;
+      type = crossTenant ? 'cross_tenant' : 'bola_idor';
+      severity = crossTenant ? 'critical' : 'high';
+      last = r.last;
+    }
+
+    return buildFinding({
+      type, severity, reqAsOwner, owner, challenger, baseline, exploit: last!,
+      baseDigest, grantFingerprint: this.grantFingerprint,
+    });
+  }
+}
+
+const TEXT: Record<AccessFindingType, { titleAr: string; titleEn: string; impAr: string; impEn: string }> = {
+  bola_idor: {
+    titleAr: 'تجاوز صلاحيات على مستوى الكائن (IDOR/BOLA)',
+    titleEn: 'Broken object-level authorization (IDOR/BOLA)',
+    impAr: 'مستخدم يقدر يوصل لبيانات مستخدم آخر.',
+    impEn: "A user can access another user's data.",
+  },
+  cross_tenant: {
+    titleAr: 'تسرّب بين المستأجرين (cross-tenant)',
+    titleEn: 'Cross-tenant data access',
+    impAr: 'عزل البيانات بين العملاء غير مطبّق.',
+    impEn: 'Tenant data isolation is not enforced.',
+  },
+  missing_auth: {
+    titleAr: 'غياب المصادقة على مورد محمي',
+    titleEn: 'Missing authentication on a protected resource',
+    impAr: 'مورد يُفترض أن يكون محمياً متاح بدون تسجيل دخول.',
+    impEn: 'A resource meant to be protected is reachable without logging in.',
+  },
+};
+
+function buildFinding(a: {
+  type: AccessFindingType; severity: Severity; reqAsOwner: RecordedRequest;
+  owner: Identity; challenger: Identity; baseline: RecordedResponse;
+  exploit: RecordedResponse; baseDigest: string; grantFingerprint: string;
+}): Finding {
+  const t = TEXT[a.type];
+  const idSuffix = a.baseDigest.slice(0, 8);
+  const who = (i: Identity) =>
+    isAnonymous(i) ? (i.role === 'anonymous' ? 'anonymous' : i.role) : `${i.role}${i.tenant ? '/' + i.tenant : ''}`;
+  return Finding.parse({
+    id: `AC-${a.type}-${idSuffix}`,
+    title: { ar: t.titleAr, en: t.titleEn },
+    severity: a.severity,
+    confidence: 'confirmed',
+    asset: new URL(a.reqAsOwner.url).host,
+    location: `${a.reqAsOwner.method} ${new URL(a.reqAsOwner.url).pathname}`,
+    description: {
+      ar: `طلب مصرّح به لـ ${who(a.owner)} رجع نفس الاستجابة المميزة عند إعادته كـ ${who(a.challenger)}، وتكرر النتيجة. لم تُطبَّق صلاحيات الوصول على هذا المورد.`,
+      en: `A request authorized for ${who(a.owner)} returned the same privileged response when replayed as ${who(a.challenger)}, reproducibly. Access control was not enforced on this resource.`,
+    },
+    impact: { ar: t.impAr, en: t.impEn },
+    remediation: {
+      ar: 'طبّق التحقق من الصلاحيات في الخادم لكل طلب: تأكد أن صاحب الجلسة يملك أو يُسمح له بالمورد المطلوب، ولا تعتمد على العميل في تحديد المعرّف.',
+      en: 'Enforce authorization server-side on every request: verify the authenticated principal owns or may access the requested object; never rely on the client to scope the id.',
+    },
+    evidence: [
+      { kind: 'request', label: 'authorized baseline', content: `${a.reqAsOwner.method} ${a.reqAsOwner.url} as ${who(a.owner)} -> ${a.baseline.status}` },
+      { kind: 'response', label: 'baseline body sha256', content: a.baseDigest },
+      { kind: 'request', label: 'replayed as challenger', content: `${a.reqAsOwner.method} ${a.reqAsOwner.url} as ${who(a.challenger)} -> ${a.exploit.status}` },
+      { kind: 'note', label: 'grant', content: `fingerprint ${a.grantFingerprint.slice(0, 16)}…` },
+    ],
+    controls: [
+      { framework: 'NCA ECC-2:2024', control: '2-2 / 2-10 (indicative, not a compliance claim)' },
+      { framework: 'OWASP API Security', control: a.type === 'missing_auth' ? 'API2:2023' : 'API1:2023' },
+      { framework: 'CWE', control: a.type === 'cross_tenant' ? 'CWE-639' : a.type === 'missing_auth' ? 'CWE-306' : 'CWE-639' },
+    ],
+    source: 'engine/authz-diff',
+    firstSeen: new Date().toISOString(),
+  });
+}
