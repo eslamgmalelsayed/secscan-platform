@@ -5,3 +5,8 @@ export * from './authorization';
 export * from './scope';
 export * from './client';
 export * from './authzDiff';
+export * from './secretStore';
+export * from './httpSender';
+export * from './session';
+export * from './telemetry';
+export * from './scanner';
