@@ -1,0 +1,128 @@
+// Postgres persistence target (Design §4). The API's in-memory repositories
+// implement the same shapes; this schema is the production adapter. Apply with
+// `prisma migrate` against a running Postgres (not run in CI without a DB).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum GrantStatus {
+  pending_owner
+  active
+  expired
+  revoked
+}
+
+enum Environment {
+  staging
+  production
+  lab
+}
+
+model Grant {
+  id                String        @id // grantId
+  ownershipProof    String
+  ownershipToken    String
+  ownershipVerified Boolean       @default(false)
+  adminApproved     Boolean       @default(false)
+  status            GrantStatus   @default(pending_owner)
+  notBefore         DateTime
+  notAfter          DateTime
+  allowStateChanging Boolean      @default(false)
+  targets           Target[]
+  chain             ChainLink[]
+  scans             Scan[]
+  audit             AuditEntry[]
+  createdAt         DateTime      @default(now())
+}
+
+model Target {
+  id      String  @id @default(cuid())
+  host    String
+  scheme  String  @default("https")
+  port    Int?
+  grant   Grant   @relation(fields: [grantId], references: [id])
+  grantId String
+}
+
+model ChainLink {
+  id        String   @id @default(cuid())
+  party     String
+  email     String
+  role      String // requester | system_owner | platform_owner
+  statement String
+  signedAt  DateTime
+  grant     Grant    @relation(fields: [grantId], references: [id])
+  grantId   String
+}
+
+model Engagement {
+  id              String      @id
+  client          String
+  preparedBy      String
+  environment     Environment
+  authorizationRef String
+  windowStart     DateTime
+  windowEnd       DateTime
+  assets          String[]
+  methodologyAr   String
+  methodologyEn   String
+  limitationsAr   String
+  limitationsEn   String
+  scans           Scan[]
+}
+
+model Scan {
+  id           String     @id
+  engagement   Engagement @relation(fields: [engagementId], references: [id])
+  engagementId String
+  grant        Grant      @relation(fields: [grantId], references: [id])
+  grantId      String
+  status       String // queued | running | done | failed
+  notTested    String[]
+  telemetry    Json?
+  findings     Finding[]
+  createdAt    DateTime   @default(now())
+}
+
+model Finding {
+  id            String  @id
+  scan          Scan    @relation(fields: [scanId], references: [id])
+  scanId        String
+  type          String
+  severity      String
+  confidence    String // confirmed | likely | needs_review
+  status        String  @default("open")
+  asset         String
+  location      String?
+  titleAr       String
+  titleEn       String
+  descriptionAr String
+  descriptionEn String
+  impactAr      String
+  impactEn      String
+  remediationAr String
+  remediationEn String
+  evidence      Json
+  controls      Json
+  source        String
+  firstSeen     DateTime
+}
+
+// Append-only: the application never issues UPDATE/DELETE on this table.
+model AuditEntry {
+  id      String   @id @default(cuid())
+  at      DateTime @default(now())
+  actor   String
+  action  String
+  detail  String?
+  grant   Grant?   @relation(fields: [grantId], references: [id])
+  grantId String?
+
+  @@index([grantId, at])
+}
