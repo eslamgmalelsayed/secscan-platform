@@ -10,6 +10,7 @@ import { securityHeaders, cookies, tlsRedirect, infoDisclosure, secretsInRespons
 import { corsMisconfig, openRedirect } from './config';
 import { reflectedInput, sqliDifferential } from './active';
 import { ssti, pathTraversal, nosqlDifferential, hostHeaderInjection } from './injection';
+import { graphqlIntrospection, csrfToken, rateLimitAbsence, massAssignment } from './logic';
 import { jwtChecks } from './jwt';
 
 export interface ChecksResult {
@@ -42,6 +43,8 @@ export async function runChecks(ctx: CheckContext, opts: RunChecksOptions = {}):
     ['reflectedInput', run.active, reflectedInput], ['sqliDifferential', run.active, sqliDifferential],
     ['ssti', run.active, ssti], ['pathTraversal', run.active, pathTraversal],
     ['nosqlDifferential', run.active, nosqlDifferential], ['hostHeaderInjection', run.active, hostHeaderInjection],
+    ['graphqlIntrospection', run.active, graphqlIntrospection], ['csrfToken', run.active, csrfToken],
+    ['rateLimitAbsence', run.active, rateLimitAbsence], ['massAssignment', run.active, massAssignment],
   ];
   for (const [name, enabled, check] of plan) {
     if (!enabled) continue;

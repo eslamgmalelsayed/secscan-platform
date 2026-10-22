@@ -196,7 +196,7 @@ describe('scope-gated scan + report', () => {
     const report = await new ReportService(engs, scans).render('E1', scan.id, 'ar');
     expect(report).toContain('تقرير تقييم أمني');
     expect(report).toContain('ما الذي لم يُفحص'); // coverage-limits section always present
-  });
+  }, 20000);
 });
 
 function labSvc(sender: Sender) {
