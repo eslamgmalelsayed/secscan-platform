@@ -9,6 +9,7 @@ import type { CheckContext } from './context';
 import { securityHeaders, cookies, tlsRedirect, infoDisclosure, secretsInResponse } from './passive';
 import { corsMisconfig, openRedirect } from './config';
 import { reflectedInput, sqliDifferential } from './active';
+import { ssti, pathTraversal, nosqlDifferential, hostHeaderInjection } from './injection';
 import { jwtChecks } from './jwt';
 
 export interface ChecksResult {
@@ -39,6 +40,8 @@ export async function runChecks(ctx: CheckContext, opts: RunChecksOptions = {}):
     ['secretsInResponse', run.passive, secretsInResponse],
     ['corsMisconfig', run.config, corsMisconfig], ['openRedirect', run.config, openRedirect],
     ['reflectedInput', run.active, reflectedInput], ['sqliDifferential', run.active, sqliDifferential],
+    ['ssti', run.active, ssti], ['pathTraversal', run.active, pathTraversal],
+    ['nosqlDifferential', run.active, nosqlDifferential], ['hostHeaderInjection', run.active, hostHeaderInjection],
   ];
   for (const [name, enabled, check] of plan) {
     if (!enabled) continue;

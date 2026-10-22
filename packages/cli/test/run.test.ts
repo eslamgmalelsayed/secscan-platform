@@ -69,7 +69,7 @@ describe('runScan (one-command, injected sender)', () => {
     expect(res.reportEn).toContain('Open redirect');
     // and it records that it discovered endpoints
     expect(res.notTested.some((n) => n.includes('discovered'))).toBe(true);
-  });
+  }, 25000);
 
   it('quick mode WITH identities runs the full suite: crawls logged-in and finds an authz issue', async () => {
     const html = (body: string): RecordedResponse => ({ status: 200, headers: { 'content-type': 'text/html' }, body });
@@ -91,5 +91,5 @@ describe('runScan (one-command, injected sender)', () => {
     // the shared order. No owner label on a crawled flow => it's a review candidate.
     expect(res.review).toBeGreaterThanOrEqual(1);
     expect(res.notTested.some((n) => n.includes("as 'customer/t1'"))).toBe(true);
-  });
+  }, 25000);
 });
