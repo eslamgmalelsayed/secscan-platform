@@ -1,0 +1,31 @@
+{
+  "name": "@secscan/desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SecScan desktop shell (Electron) — wraps the full suite with native network access.",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "dev.secscan.desktop",
+    "productName": "SecScan",
+    "files": ["main.cjs", "preload.cjs"],
+    "extraResources": [
+      { "from": "../../scripts/serve.mjs", "to": "app/scripts/serve.mjs" },
+      { "from": "../../apps/web/dist", "to": "app/apps/web/dist" },
+      { "from": "../../packages", "to": "app/packages", "filter": ["*/dist/**", "*/package.json"] },
+      { "from": "../../node_modules", "to": "app/node_modules" }
+    ],
+    "win": { "target": ["nsis"] },
+    "mac": { "target": ["dmg"], "category": "public.app-category.developer-tools" },
+    "linux": { "target": ["AppImage"] }
+  }
+}
