@@ -13,5 +13,6 @@ export * from './ownership';
 export * from './httpSender';
 export * from './discover';
 export * from './services';
+export * from './lanAudit';
 export * from './telemetry';
 export * from './scanner';
