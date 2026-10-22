@@ -3,10 +3,12 @@ import { reactive } from 'vue';
 
 export const settings = reactive({
   adminToken: localStorage.getItem('secscan.adminToken') ?? '',
+  apiToken: localStorage.getItem('secscan.apiToken') ?? '',
   actor: localStorage.getItem('secscan.actor') ?? 'operator@local',
 });
 export function saveSettings() {
   localStorage.setItem('secscan.adminToken', settings.adminToken);
+  localStorage.setItem('secscan.apiToken', settings.apiToken);
   localStorage.setItem('secscan.actor', settings.actor);
 }
 
@@ -19,6 +21,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     method,
     headers: {
       'content-type': 'application/json',
+      // Bearer token for every non-public route when API auth is configured.
+      ...(settings.apiToken ? { authorization: `Bearer ${settings.apiToken}` } : {}),
       ...(settings.adminToken ? { 'x-admin-token': settings.adminToken } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -29,8 +33,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T;
 }
 
+export interface Health {
+  ok: boolean; legalResolved: boolean; adminTokenRequired: boolean;
+  apiTokenRequired: boolean; ownerEmailSignOff: boolean; identities: number;
+}
+
 export const api = {
-  health: () => call<{ ok: boolean; legalResolved: boolean; adminTokenRequired: boolean; identities: number }>('GET', '/health'),
+  health: () => call<Health>('GET', '/health'),
   identities: () => call<Identity[]>('GET', '/identities'),
   grants: {
     list: () => call<GrantSummary[]>('GET', '/grants'),
@@ -38,6 +47,12 @@ export const api = {
     create: (grant: unknown) => call<{ grantId: string }>('POST', '/grants', { grant, actor: settings.actor }),
     ownership: (id: string) => call<GrantSummary & { verification: { ok: boolean; detail: string[] } }>('POST', `/grants/${id}/ownership`, { actor: settings.actor }),
     ownershipManual: (id: string) => call<GrantSummary>('POST', `/grants/${id}/ownership/manual`, { actor: settings.actor }),
+    // Owner sign-off by email OTP (two steps): request a code, then confirm it.
+    ownerSignRequest: (id: string, owner: { party: string; email: string; statement: string }) =>
+      call<{ challengeId: string; expiresAt: string }>('POST', `/grants/${id}/owner-sign/request`, { owner, actor: settings.actor }),
+    ownerSignConfirm: (id: string, challengeId: string, code: string) =>
+      call<GrantSummary>('POST', `/grants/${id}/owner-sign/confirm`, { challengeId, code, actor: settings.actor }),
+    // Lab-only manual signature (admin token required).
     ownerSign: (id: string, link: unknown) => call<GrantSummary>('POST', `/grants/${id}/owner-sign`, { link, actor: settings.actor }),
     approve: (id: string) => call<GrantSummary>('POST', `/grants/${id}/approve`, { actor: settings.actor }),
     revoke: (id: string) => call<GrantSummary>('POST', `/grants/${id}/revoke`, { actor: settings.actor }),

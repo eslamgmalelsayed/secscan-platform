@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { api, settings, saveSettings } from './api';
+import { api, settings, saveSettings, type Health } from './api';
 import Overview from './views/Overview.vue';
 import Grants from './views/Grants.vue';
 import ScanSetup from './views/ScanSetup.vue';
@@ -9,7 +9,7 @@ import { toast } from './toast';
 
 type View = 'overview' | 'grants' | 'scan' | 'results';
 const view = ref<View>('overview');
-const health = ref<{ ok: boolean; legalResolved: boolean; adminTokenRequired: boolean; identities: number } | null>(null);
+const health = ref<Health | null>(null);
 const apiDown = ref(false);
 const selectedScan = ref<string | null>(null);
 
@@ -20,6 +20,13 @@ async function refreshHealth() {
 onMounted(() => { refreshHealth(); setInterval(refreshHealth, 10_000); });
 
 function openScan(id: string) { selectedScan.value = id; view.value = 'results'; }
+
+const theme = ref<'light' | 'dark'>(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+function toggleTheme() {
+  theme.value = theme.value === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = theme.value;
+  localStorage.setItem('secscan.theme', theme.value);
+}
 
 const nav: { id: View; label: string; step: number }[] = [
   { id: 'overview', label: 'Overview', step: 0 },
@@ -44,12 +51,15 @@ const nav: { id: View; label: string; step: number }[] = [
       <div class="card" style="margin-top: 18px; padding: 12px">
         <label style="margin-top: 0">Actor (for the audit log)</label>
         <input v-model="settings.actor" @change="saveSettings()" />
+        <label>API token <span v-if="health?.apiTokenRequired" class="chip warn">required</span></label>
+        <input v-model="settings.apiToken" type="password" placeholder="Bearer token (SECSCAN_API_TOKENS)" @change="saveSettings()" />
         <label>Admin token <span v-if="health?.adminTokenRequired" class="chip warn">required</span></label>
         <input v-model="settings.adminToken" type="password" placeholder="SECSCAN_ADMIN_TOKEN" @change="saveSettings()" />
       </div>
       <div class="foot">
-        <div class="row" style="gap: 6px">
+        <div class="row between" style="gap: 6px">
           <span class="chip" :class="apiDown ? 'bad' : 'ok'">{{ apiDown ? 'API unreachable' : 'API online' }}</span>
+          <button class="btn sm" @click="toggleTheme">{{ theme === 'dark' ? '☀ Light' : '☾ Dark' }}</button>
         </div>
         <div v-if="health" style="margin-top: 8px">
           <span class="chip" :class="health.legalResolved ? 'warn' : 'accent'">{{ health.legalResolved ? 'external targets unlocked' : 'lab allow-list only' }}</span>

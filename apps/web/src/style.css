@@ -1,4 +1,28 @@
+/* Light is the default theme. Dark is opt-in via <html data-theme="dark">. */
 :root {
+  --bg: #f5f8fc;
+  --bg-2: #eef2f8;
+  --panel: #ffffff;
+  --panel-2: #f3f6fb;
+  --line: #dde4ee;
+  --text: #0f1b2d;
+  --muted: #5c6b82;
+  --accent: #0ea5e9;
+  --accent-2: #0891b2;
+  --ok: #0f8a53;
+  --warn: #b26a00;
+  --bad: #d23048;
+  --crit: #c21f45;
+  --high: #c2561d;
+  --med: #b26a00;
+  --low: #0e7fb0;
+  --info: #5c6b82;
+  --body-bg: radial-gradient(1200px 600px at 10% -10%, #e6f0fb 0%, var(--bg) 55%);
+  --radius: 12px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+:root[data-theme="dark"] {
   --bg: #0b0f14;
   --bg-2: #10161d;
   --panel: #151c25;
@@ -16,14 +40,12 @@
   --med: #ffb547;
   --low: #4cc9f0;
   --info: #8b9bb0;
-  --radius: 12px;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --body-bg: radial-gradient(1200px 600px at 10% -10%, #14202c 0%, var(--bg) 55%);
 }
 * { box-sizing: border-box; }
 html, body, #app { height: 100%; margin: 0; }
 body {
-  background: radial-gradient(1200px 600px at 10% -10%, #14202c 0%, var(--bg) 55%);
+  background: var(--body-bg);
   color: var(--text);
   font-family: var(--sans);
   font-size: 14px;
