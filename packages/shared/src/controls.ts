@@ -7,12 +7,13 @@
 import type { ControlRef } from './finding';
 
 export type FindingCategory =
-  | 'access_control' | 'missing_auth' | 'injection' | 'xss' | 'open_redirect'
+  | 'access_control' | 'function_level' | 'missing_auth' | 'injection' | 'xss' | 'open_redirect'
   | 'cors' | 'security_header' | 'insecure_cookie' | 'tls' | 'info_disclosure'
   | 'secret_exposure' | 'jwt';
 
 const M: Record<FindingCategory, ControlRef[]> = {
   access_control: refs('2-2 / 2-10', 'API1:2023', 'CWE-639', 'V4.1', 'A.8.3', 'PR.AC'),
+  function_level: refs('2-2 / 2-10', 'API5:2023', 'CWE-285', 'V4.1', 'A.8.3', 'PR.AC'),
   missing_auth: refs('2-2', 'API2:2023', 'CWE-306', 'V2.1', 'A.8.5', 'PR.AC'),
   injection: refs('2-15', 'A03:2021', 'CWE-89', 'V5.3', 'A.8.28', 'PR.DS'),
   xss: refs('2-15', 'A03:2021', 'CWE-79', 'V5.3', 'A.8.28', 'PR.DS'),

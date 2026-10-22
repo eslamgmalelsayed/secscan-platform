@@ -29,6 +29,16 @@ export interface RecordedRequest {
    * import never auto-confirms an IDOR — a human labels it first. (§6/§9.)
    */
   ownsObject?: boolean;
+  /**
+   * Owner's assertion that this endpoint is a PRIVILEGED FUNCTION — one only a
+   * higher-privilege role (admin, manager…) should be able to call. The oracle
+   * for function-level findings (BFLA): a request names no object, so an equal
+   * body under two identities could be a real privilege break OR two accounts
+   * seeded alike; only the owner knows the function is privileged. With this
+   * label a lower-role identity reaching it is a confirmed BFLA; without it the
+   * match goes to review as `likely`. (OWASP API5:2023.)
+   */
+  privilegedFunction?: boolean;
 }
 
 export interface RecordedResponse {

@@ -81,7 +81,7 @@ export const api = {
 export interface Identity { role: string; tenant?: string | null; sessionRef?: string | null }
 export interface Flow {
   method: string; url: string; headers?: Record<string, string>; body?: string | null;
-  capturedAsRole?: string; capturedAsTenant?: string | null; requiresAuth?: boolean; ownsObject?: boolean;
+  capturedAsRole?: string; capturedAsTenant?: string | null; requiresAuth?: boolean; ownsObject?: boolean; privilegedFunction?: boolean;
 }
 export interface GrantSummary {
   grantId: string; status: string; ownershipVerified: boolean; adminApproved: boolean;

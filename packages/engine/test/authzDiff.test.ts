@@ -157,20 +157,31 @@ describe('AuthorizationDiffer — a shared resource named by an object id (produ
   });
 });
 
-describe('AuthorizationDiffer — cross-role without an object identifier', () => {
-  it('yields a `likely` candidate for review, never a confirmed finding', async () => {
-    // /admin/settings has no identifier; a customer receiving the admin body is
-    // function-level access OR identical seeds — a human must decide.
-    const app: Sender = async (req, ident) => {
-      if (!ident.sessionRef) return json(401, '{}');
-      if (new URL(req.url).pathname === '/admin/settings') return json(200, '{"maintenance":false}');
-      return json(404, '{}');
-    };
-    const ADMIN: Identity = { role: 'admin', tenant: 't1', sessionRef: 'sess-admin' };
-    const req: RecordedRequest = { method: 'GET', url: `https://${HOST}/admin/settings`, capturedAsRole: 'admin', capturedAsTenant: 't1' };
-    const f = await differ(app).testObjectAccess(req, ADMIN, BOB);
+describe('AuthorizationDiffer — function-level authorization (BFLA)', () => {
+  // /admin/settings has no object identifier; a customer receiving the admin
+  // body is broken function-level authorization OR identically seeded accounts.
+  const app: Sender = async (req, ident) => {
+    if (!ident.sessionRef) return json(401, '{}');
+    if (new URL(req.url).pathname === '/admin/settings') return json(200, '{"maintenance":false}');
+    return json(404, '{}');
+  };
+  const ADMIN: Identity = { role: 'admin', tenant: 't1', sessionRef: 'sess-admin' };
+  const SETTINGS = (privilegedFunction?: boolean): RecordedRequest =>
+    ({ method: 'GET', url: `https://${HOST}/admin/settings`, privilegedFunction, capturedAsRole: 'admin', capturedAsTenant: 't1' });
+
+  it('yields a `likely` function-level candidate for review when the flow is not labelled', async () => {
+    const f = await differ(app).testObjectAccess(SETTINGS(), ADMIN, BOB);
     expect(f).not.toBeNull();
+    expect(f!.id).toContain('function_level');
     expect(f!.confidence).toBe('likely');
     expect(f!.evidence.some((e) => e.label === 'review')).toBe(true);
+  });
+
+  it('confirms a BFLA once the owner labels the endpoint a privileged function', async () => {
+    const f = await differ(app).testObjectAccess(SETTINGS(true), ADMIN, BOB);
+    expect(f!.id).toContain('function_level');
+    expect(f!.confidence).toBe('confirmed');
+    expect(f!.severity).toBe('high');
+    expect(f!.controls.some((c) => c.framework === 'OWASP' && c.control === 'API5:2023')).toBe(true);
   });
 });

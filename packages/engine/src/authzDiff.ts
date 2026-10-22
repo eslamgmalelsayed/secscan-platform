@@ -33,13 +33,14 @@ export interface DiffConfig {
 }
 const DEFAULT: DiffConfig = { replaysForConfirmation: 2 };
 
-const CVSS_BY_TYPE: Record<'bola_idor' | 'cross_tenant' | 'missing_auth', Cvss31Metrics> = {
-  bola_idor:    { AV: 'N', AC: 'L', PR: 'L', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' },
-  cross_tenant: { AV: 'N', AC: 'L', PR: 'L', UI: 'N', S: 'C', C: 'H', I: 'L', A: 'N' },
-  missing_auth: { AV: 'N', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' },
+const CVSS_BY_TYPE: Record<'bola_idor' | 'cross_tenant' | 'missing_auth' | 'function_level', Cvss31Metrics> = {
+  bola_idor:      { AV: 'N', AC: 'L', PR: 'L', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' },
+  cross_tenant:   { AV: 'N', AC: 'L', PR: 'L', UI: 'N', S: 'C', C: 'H', I: 'L', A: 'N' },
+  missing_auth:   { AV: 'N', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' },
+  function_level: { AV: 'N', AC: 'L', PR: 'L', UI: 'N', S: 'U', C: 'H', I: 'H', A: 'N' },
 };
 
-export type AccessFindingType = 'bola_idor' | 'cross_tenant' | 'missing_auth';
+export type AccessFindingType = 'bola_idor' | 'cross_tenant' | 'missing_auth' | 'function_level';
 
 function looksAuthorized(r: RecordedResponse): boolean {
   return r.status >= 200 && r.status < 300 && r.body.length > 0;
@@ -113,17 +114,29 @@ export class AuthorizationDiffer {
       if (!namesObject && challenger.role === owner.role) return null;
       const r = await this.reproduce(reqAsOwner, challenger, baseDigest);
       if (r.matches < this.cfg.replaysForConfirmation) return null;
-      const crossTenant = !!challenger.tenant && !!owner.tenant && challenger.tenant !== owner.tenant;
-      type = crossTenant ? 'cross_tenant' : 'bola_idor';
-      severity = crossTenant ? 'critical' : 'high';
-      // Confirmed ONLY when the owner has labelled this flow owner-of-object.
-      // Without the label we cannot distinguish a private object from a resource
-      // every authenticated user may see — the finding goes to human review.
-      if (!(namesObject && reqAsOwner.ownsObject)) {
-        confidence = 'likely';
-        reviewReason = !namesObject
-          ? 'request names no object identifier; equal body across roles may be function-level access or identically seeded test accounts'
-          : 'request names an object but the flow is not labelled owner-of-object; a resource every authenticated user may legitimately see (e.g. a shared or catalog item) is indistinguishable from a private object by response comparison alone — a human must confirm ownership';
+
+      if (namesObject) {
+        // Object-level: a named object reached by another identity (IDOR/BOLA),
+        // or across tenants. Confirmed only when the owner labelled the object
+        // as theirs; otherwise a shared/catalog item is indistinguishable, so review.
+        const crossTenant = !!challenger.tenant && !!owner.tenant && challenger.tenant !== owner.tenant;
+        type = crossTenant ? 'cross_tenant' : 'bola_idor';
+        severity = crossTenant ? 'critical' : 'high';
+        if (!reqAsOwner.ownsObject) {
+          confidence = 'likely';
+          reviewReason = 'request names an object but the flow is not labelled owner-of-object; a resource every authenticated user may legitimately see (e.g. a shared or catalog item) is indistinguishable from a private object by response comparison alone — a human must confirm ownership';
+        }
+      } else {
+        // Function-level (BFLA): no object named, but a DIFFERENT-role identity
+        // reproduced the privileged response. Confirmed only when the owner
+        // labelled the endpoint a privileged function; otherwise two accounts
+        // may just be seeded alike, so it goes to review.
+        type = 'function_level';
+        severity = 'high';
+        if (!reqAsOwner.privilegedFunction) {
+          confidence = 'likely';
+          reviewReason = 'request names no object identifier; a lower-role identity received the same response, which is broken function-level authorization OR two identically seeded test accounts — label the flow a privileged function to confirm';
+        }
       }
       last = r.last;
     }
@@ -153,6 +166,12 @@ const TEXT: Record<AccessFindingType, { titleAr: string; titleEn: string; impAr:
     titleEn: 'Missing authentication on a protected resource',
     impAr: 'مورد يُفترض أن يكون محمياً متاح بدون تسجيل دخول.',
     impEn: 'A resource meant to be protected is reachable without logging in.',
+  },
+  function_level: {
+    titleAr: 'تجاوز صلاحيات على مستوى الوظيفة (BFLA)',
+    titleEn: 'Broken function-level authorization (BFLA)',
+    impAr: 'دور أقل صلاحية يقدر ينفّذ وظيفة مخصّصة لدور أعلى.',
+    impEn: 'A lower-privilege role can invoke a function meant for a higher-privilege role.',
   },
 };
 
@@ -191,7 +210,7 @@ function buildFinding(a: {
         : []),
     ],
     cvss: cvss31(CVSS_BY_TYPE[a.type]),
-    controls: controlsFor(a.type === 'missing_auth' ? 'missing_auth' : 'access_control'),
+    controls: controlsFor(a.type === 'missing_auth' ? 'missing_auth' : a.type === 'function_level' ? 'function_level' : 'access_control'),
     source: 'engine/authz-diff',
     firstSeen: new Date().toISOString(),
   });
