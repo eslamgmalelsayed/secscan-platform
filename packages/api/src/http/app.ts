@@ -5,7 +5,7 @@ import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify
 import { buildCore, CORE, type CoreOptions, type CoreGraph } from './core-factory';
 import {
   GrantsController, ScansController, EngagementsController, HealthController,
-  IdentitiesController, FlowsController,
+  IdentitiesController, FlowsController, AgentController,
 } from './controllers';
 import { DomainErrorFilter } from './errors.filter';
 import { PUBLIC_ROUTES, authenticate } from './auth';
@@ -15,7 +15,7 @@ export async function buildApp(opts: CoreOptions): Promise<NestFastifyApplicatio
   const core: CoreGraph = buildCore(opts);
 
   @Module({
-    controllers: [HealthController, GrantsController, ScansController, EngagementsController, IdentitiesController, FlowsController],
+    controllers: [HealthController, GrantsController, ScansController, EngagementsController, IdentitiesController, FlowsController, AgentController],
     providers: [{ provide: CORE, useValue: core }],
   })
   class AppModule {}

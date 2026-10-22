@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { Engagement } from '@secscan/shared';
 import type { Lang } from '@secscan/report';
 import { fromHar, fromOpenApi } from '@secscan/importers';
+import { runAgentAudit } from '@secscan/engine';
 import { CORE, type CoreGraph } from './core-factory';
 import { safeEqual } from './auth';
 
@@ -308,6 +309,16 @@ export class ScansController {
     if (!s) throw new NotFoundError(`scan ${id} not found`);
     const l: Lang = LangSchema.parse(lang);
     return { markdown: await this.core.report.render(s.engagementId, id, l) };
+  }
+}
+
+/** On-network agent: runs the LAN/ARP/WiFi audit on the machine hosting the API
+ *  (the user's machine in desktop/serve mode). Audits a network you own. */
+@Controller('agent')
+export class AgentController {
+  @Get('audit')
+  async audit(@Query('cidr') cidr?: string, @Query('gateway') gateway?: string) {
+    return runAgentAudit({ cidr: cidr || undefined, gateway: gateway || undefined });
   }
 }
 

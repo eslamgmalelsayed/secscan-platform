@@ -5,9 +5,10 @@ import Overview from './views/Overview.vue';
 import Grants from './views/Grants.vue';
 import ScanSetup from './views/ScanSetup.vue';
 import Results from './views/Results.vue';
+import Network from './views/Network.vue';
 import { toast } from './toast';
 
-type View = 'overview' | 'grants' | 'scan' | 'results';
+type View = 'overview' | 'grants' | 'scan' | 'results' | 'network';
 const view = ref<View>('overview');
 const health = ref<Health | null>(null);
 const apiDown = ref(false);
@@ -33,6 +34,7 @@ const nav: { id: View; label: string; step: number }[] = [
   { id: 'grants', label: 'Authorization', step: 1 },
   { id: 'scan', label: 'Scan setup', step: 2 },
   { id: 'results', label: 'Results & reports', step: 3 },
+  { id: 'network', label: 'Network (agent)', step: 4 },
 ];
 </script>
 
@@ -71,6 +73,7 @@ const nav: { id: View; label: string; step: number }[] = [
       <Overview v-if="view === 'overview'" :health="health" @go="(v: View) => view = v" @open-scan="openScan" />
       <Grants v-else-if="view === 'grants'" />
       <ScanSetup v-else-if="view === 'scan'" @open-scan="openScan" />
+      <Network v-else-if="view === 'network'" />
       <Results v-else :scan-id="selectedScan" @select="(id: string) => selectedScan = id" />
     </main>
 

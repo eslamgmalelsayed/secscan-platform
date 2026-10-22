@@ -70,6 +70,10 @@ export const api = {
     // Broadcast a message to every device that has /display open (serve/desktop mode).
     broadcast: (text: string) => call<{ delivered: number }>('POST', '/messages/broadcast', { text }),
   },
+  agent: {
+    // On-network audit — runs on the machine hosting the API (desktop/serve).
+    audit: (cidr?: string) => call<AgentAudit>('GET', `/agent/audit${cidr ? `?cidr=${encodeURIComponent(cidr)}` : ''}`),
+  },
   scans: {
     list: () => call<ScanSummary[]>('GET', '/scans'),
     get: (id: string) => call<ScanRecord>('GET', `/scans/${id}`),
@@ -82,6 +86,14 @@ export const api = {
   },
 };
 
+export interface LanFinding { kind: string; severity: string; title: string; detail: string }
+export interface AgentAudit {
+  platform: string; cidr?: string; arpEntries: number; gateway?: string;
+  devices: { host: string; ports: number[] }[];
+  network: LanFinding[];
+  wifi: { ssid?: string; security?: string; wps?: boolean };
+  wifiFindings: LanFinding[];
+}
 export interface Identity { role: string; tenant?: string | null; sessionRef?: string | null }
 export interface Flow {
   method: string; url: string; headers?: Record<string, string>; body?: string | null;

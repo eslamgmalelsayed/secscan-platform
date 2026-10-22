@@ -10,12 +10,8 @@
  * authorization lifecycle locally. Without it the command refuses to run.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { fromHar, fromOpenApi } from '@secscan/importers';
-import {
-  discoverServices, discoverSubnet, parseArpTable, detectArpSpoof,
-  parseWifiSecurity, auditWifiPosture, localSubnetCidr, type RecordedRequest,
-} from '@secscan/engine';
+import { discoverServices, runAgentAudit, type RecordedRequest } from '@secscan/engine';
 import { runScan } from './run';
 
 type Args = Record<string, string | boolean>;
@@ -139,46 +135,26 @@ async function quick(url: string, args: Args) {
  * the ARP table for spoofing signs, and audits the WiFi crypto posture. Audits
  * a network you own; it never attacks other people's gear.
  */
-function sh(cmd: string): string {
-  try { return execSync(cmd, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 }); } catch { return ''; }
-}
-function wifiCommand(): string {
-  if (process.platform === 'darwin') return sh('/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I') || sh('system_profiler SPAirPortDataType');
-  if (process.platform === 'win32') return sh('netsh wlan show interfaces');
-  return sh('nmcli -t -f ACTIVE,SSID,SECURITY dev wifi') || sh('iwconfig');
-}
 async function agent(args: Args) {
   console.log(`[secscan] agent on ${process.platform} — auditing your own network (non-destructive)`);
+  const r = await runAgentAudit({
+    cidr: args.cidr as string, gateway: args.gateway as string,
+    timeoutMs: args['timeout-ms'] ? Number(args['timeout-ms']) : undefined,
+  });
 
-  // 1) LAN device discovery
-  const cidr = (args.cidr as string) || localSubnetCidr();
-  if (cidr) {
-    console.log(`\n[devices] scanning ${cidr}…`);
-    try {
-      const hosts = await discoverSubnet(cidr, { timeoutMs: args['timeout-ms'] ? Number(args['timeout-ms']) : 800 });
-      if (!hosts.length) console.log('  (no open ports found)');
-      for (const h of hosts) console.log(`  - ${h.host}: ${h.ports.join(', ')}`);
-    } catch (e) { console.log(`  skipped: ${(e as Error).message}`); }
-  } else console.log('\n[devices] no private LAN interface found; pass --cidr 192.168.1.0/24');
+  console.log(`\n[devices] ${r.cidr ? `scanned ${r.cidr}` : 'no private LAN interface found (pass --cidr 192.168.1.0/24)'}`);
+  if (!r.devices.length) console.log('  (no open ports found)');
+  for (const h of r.devices) console.log(`  - ${h.host}: ${h.ports.join(', ')}`);
 
-  // 2) ARP-spoof detection
-  const arpText = sh(process.platform === 'win32' ? 'arp -a' : 'arp -an');
-  const entries = parseArpTable(arpText);
-  const gw = (args.gateway as string) || entries.find((e) => /\.1$/.test(e.ip))?.ip;
-  const arpFindings = detectArpSpoof(entries, gw);
-  console.log(`\n[arp] ${entries.length} entries${gw ? `, gateway ${gw}` : ''}`);
-  if (!arpFindings.length) console.log('  no spoofing signs');
-  for (const f of arpFindings) console.log(`  ! [${f.severity}] ${f.title} — ${f.detail}`);
+  console.log(`\n[arp] ${r.arpEntries} entries${r.gateway ? `, gateway ${r.gateway}` : ''}`);
+  if (!r.network.length) console.log('  no spoofing signs');
+  for (const f of r.network) console.log(`  ! [${f.severity}] ${f.title} — ${f.detail}`);
 
-  // 3) WiFi posture
-  const wifi = parseWifiSecurity(wifiCommand());
-  const wifiFindings = auditWifiPosture(wifi);
-  console.log(`\n[wifi] ${wifi.ssid ? `SSID '${wifi.ssid}'` : 'network'}${wifi.security ? ` — ${wifi.security}` : ''}`);
-  if (!wifiFindings.length) console.log('  posture looks fine');
-  for (const f of wifiFindings) console.log(`  ! [${f.severity}] ${f.title} — ${f.detail}`);
+  console.log(`\n[wifi] ${r.wifi.ssid ? `SSID '${r.wifi.ssid}'` : 'network'}${r.wifi.security ? ` — ${r.wifi.security}` : ''}`);
+  if (!r.wifiFindings.length) console.log('  posture looks fine');
+  for (const f of r.wifiFindings) console.log(`  ! [${f.severity}] ${f.title} — ${f.detail}`);
 
-  const total = arpFindings.length + wifiFindings.length;
-  console.log(`\n[secscan] agent done — ${total} network finding(s).`);
+  console.log(`\n[secscan] agent done — ${r.network.length + r.wifiFindings.length} network finding(s).`);
 }
 
 /** `secscan services <host>` — non-destructive connect scan of one owned host. */
