@@ -66,13 +66,7 @@ npm run build -w @secscan/api && npm run smoke -w @secscan/api   # 7 HTTP checks
 - **CLI**: `secscan quick <url>` — خطوة واحدة؛ أضف `--identities` لتغطية الصفحات خلف تسجيل الدخول وتفعيل محرك IDOR.
 - **السقف الصادق:** IDOR/BOLA/cross-tenant تحتاج إعادة تشغيل حركة مرور مسجَّلة دخولها بهويات متعددة؛ رابط وحده بلا تسجيل دخول لا يوفّر من يُنتحَل، فتبقى هذه الفحوص خارج «الخطوة الواحدة» حتى تُضاف الهويات.
 
-## تحديث 2026-10-22 (مساءً، 8) — أفضل طريقة لتجربة الحزمة كاملة: `npm run demo`
-
-أسرع عرض للحزمة الكاملة محليًا، بأمر واحد، بلا موقع خارجي ولا إعداد هويات يدوي:
-- **معمل مصاب عمدًا** (`scripts/lab/target.mjs`): مستخدمون بكوكي `sid` (alice/bob/carol customer، admin)، طلبات مكسورة الصلاحيات (IDOR + cross-tenant)، وظيفة أدمن متاحة لأي دور (BFLA)، منتج مشترك (يظهر حارس المورد المشترك)، وسنكات حقن (SSTI/انعكاس)، open-redirect، GraphQL introspection، CORS، وبلا ترويسات أمان.
-- **هويات + flows موسومة جاهزة** (`scripts/lab/identities.json`, `scripts/lab/flows.json`) — الوسوم (`ownsObject`/`privilegedFunction`) تجعل نتائج الصلاحيات **مؤكَّدة** لا مجرد مرشّحة.
-- **`npm run demo`** (`scripts/demo.mjs`): يبني، يشغّل المعمل + الـ API (dev-trust، محمّلًا الهويات) + الويب، يشغّل الحزمة كاملة بـ flows موسومة، يطبع الملخص، ويفتح المتصفح. نقطة `POST /scans/quick` صارت تقبل `flows` اختيارية (موسومة) بدل الزحف.
-- **مُتحقَّق فعليًا هنا:** 10 مؤكَّدة (cross_tenant, bola_idor, function_level/BFLA, injection/SSTI, cors, info_disclosure/GraphQL, open_redirect, security_header) + 5 للمراجعة (المنتج المشترك كـ bola/cross likely، reflected-XSS، rate_limit).
+> ملاحظة: `POST /scans/quick` يقبل `flows` موسومة اختيارية (تُفحَص كما هي، فتمكن نتائج صلاحيات مؤكَّدة) بدل الزحف — لاستخدامها مع أهدافك و flows الخاصة بك.
 
 ## تحديث 2026-10-22 (مساءً، 7) — الجلسات، اكتشاف الخدمات، الموبايل، الاستغلال المُبوَّب، وتشغيل بخطوة واحدة
 

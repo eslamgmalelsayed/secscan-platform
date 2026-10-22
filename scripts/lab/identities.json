@@ -1,6 +1,0 @@
-{
-  "customer/t1":  { "cookies": { "sid": "alice" }, "liveness": "http://127.0.0.1:7799/api/me" },
-  "customer2/t1": { "cookies": { "sid": "bob" },   "liveness": "http://127.0.0.1:7799/api/me" },
-  "customer/t2":  { "cookies": { "sid": "carol" }, "liveness": "http://127.0.0.1:7799/api/me" },
-  "admin/t1":     { "cookies": { "sid": "admin" }, "liveness": "http://127.0.0.1:7799/api/me" }
-}
