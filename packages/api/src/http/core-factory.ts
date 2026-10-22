@@ -2,8 +2,19 @@
 import type { HostResolver, Identity, OwnershipDeps, PacingOptions, Sender } from '@secscan/engine';
 import {
   AppendOnlyAuditLog, AuthorizationService, LabPolicy, ReportService, ScanService,
-  InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo,
+  InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo, InMemoryOwnerChallengeStore,
+  type AuditStore, type EngagementRepo, type GrantRepo, type Mailer, type OwnerChallengeStore, type ScanRepo,
 } from '../core';
+import type { ApiAuth } from './auth';
+
+/** Where state lives. Omit for in-memory (tests, quick local runs). */
+export interface CoreStores {
+  grants: GrantRepo;
+  engagements: EngagementRepo;
+  scans: ScanRepo;
+  audit: AuditStore;
+  challenges: OwnerChallengeStore;
+}
 
 export interface CoreOptions {
   lab: LabPolicy;
@@ -14,40 +25,58 @@ export interface CoreOptions {
   liveness?: Record<string, string>;
   /** Injected DNS/HTTP for ownership proofs (tests); defaults to the real network. */
   ownership?: OwnershipDeps;
-  /** Required in the x-admin-token header for approve / revoke / manual ownership.
+  /** Required in the x-admin-token header for approve / revoke / manual ownership / manual sign.
    *  Unset = open (local dev only); the API logs a warning at boot. */
   adminToken?: string;
+  /** Bearer tokens for every other route; unset = open (local dev only). */
+  auth?: ApiAuth;
+  /** Delivers owner sign-off codes. Unset = email sign-off disabled (manual path only). */
+  mailer?: Mailer;
   /** Test identities loaded at boot (keys only are ever exposed over HTTP). */
   identities?: Identity[];
+  stores?: CoreStores;
 }
 
 export interface CoreGraph {
-  audit: AppendOnlyAuditLog;
-  grants: InMemoryGrantRepo;
-  engagements: InMemoryEngagementRepo;
-  scans: InMemoryScanRepo;
+  audit: AuditStore;
+  grants: GrantRepo;
+  engagements: EngagementRepo;
+  scans: ScanRepo;
   auth: AuthorizationService;
   scan: ScanService;
   report: ReportService;
   lab: LabPolicy;
   ownership?: OwnershipDeps;
   adminToken?: string;
+  apiAuth?: ApiAuth;
+  ownerEmailEnabled: boolean;
   identities: Identity[];
 }
 
 export function buildCore(opts: CoreOptions): CoreGraph {
-  const audit = new AppendOnlyAuditLog();
-  const grants = new InMemoryGrantRepo();
-  const engagements = new InMemoryEngagementRepo();
-  const scans = new InMemoryScanRepo();
-  const auth = new AuthorizationService(grants, audit);
+  const s: CoreStores = opts.stores ?? {
+    grants: new InMemoryGrantRepo(),
+    engagements: new InMemoryEngagementRepo(),
+    scans: new InMemoryScanRepo(),
+    audit: new AppendOnlyAuditLog(),
+    challenges: new InMemoryOwnerChallengeStore(),
+  };
+  const auth = new AuthorizationService(
+    s.grants, s.audit,
+    opts.mailer ? { mailer: opts.mailer, challenges: s.challenges, secret: opts.fingerprintSecret } : undefined,
+  );
   const scan = new ScanService({
-    auth, lab: opts.lab, scans, audit,
+    auth, lab: opts.lab, scans: s.scans, audit: s.audit,
     sender: opts.sender, fingerprintSecret: opts.fingerprintSecret, resolveHost: opts.resolveHost,
     pacing: opts.pacing, liveness: opts.liveness,
   });
-  const report = new ReportService(engagements, scans);
-  return { audit, grants, engagements, scans, auth, scan, report, lab: opts.lab, ownership: opts.ownership, adminToken: opts.adminToken, identities: opts.identities ?? [] };
+  const report = new ReportService(s.engagements, s.scans);
+  return {
+    audit: s.audit, grants: s.grants, engagements: s.engagements, scans: s.scans,
+    auth, scan, report, lab: opts.lab, ownership: opts.ownership,
+    adminToken: opts.adminToken, apiAuth: opts.auth, ownerEmailEnabled: !!opts.mailer,
+    identities: opts.identities ?? [],
+  };
 }
 
 export const CORE = 'SECSCAN_CORE';

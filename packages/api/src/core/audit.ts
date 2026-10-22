@@ -1,7 +1,8 @@
 /**
  * Append-only authorization log (Design §6).
  * Every authorization step is recorded. There is deliberately no update or
- * delete — entries can only be appended and read.
+ * delete — entries can only be appended and read. `AuditStore` is the
+ * interface; the Prisma store implements it with INSERT/SELECT only.
  */
 export interface AuditEntry {
   id: string;
@@ -12,11 +13,19 @@ export interface AuditEntry {
   detail?: string;
 }
 
-export class AppendOnlyAuditLog {
+export type AuditInput = Omit<AuditEntry, 'id' | 'at'> & { at?: string };
+
+export interface AuditStore {
+  append(e: AuditInput): Promise<AuditEntry>;
+  /** Oldest first. */
+  list(grantId?: string): Promise<AuditEntry[]>;
+}
+
+export class AppendOnlyAuditLog implements AuditStore {
   private entries: AuditEntry[] = [];
   private seq = 0;
 
-  append(e: Omit<AuditEntry, 'id' | 'at'> & { at?: string }): AuditEntry {
+  async append(e: AuditInput): Promise<AuditEntry> {
     const entry: AuditEntry = {
       id: `ae-${++this.seq}`,
       at: e.at ?? new Date().toISOString(),
@@ -26,11 +35,11 @@ export class AppendOnlyAuditLog {
       detail: e.detail,
     };
     this.entries.push(entry);
-    return entry;
+    return { ...entry };
   }
 
   /** Read-only view (a copy); callers cannot mutate the log through it. */
-  list(grantId?: string): AuditEntry[] {
+  async list(grantId?: string): Promise<AuditEntry[]> {
     const all = this.entries.map((x) => ({ ...x }));
     return grantId ? all.filter((x) => x.grantId === grantId) : all;
   }

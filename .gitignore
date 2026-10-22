@@ -5,3 +5,6 @@ dist/
 !.env.example
 coverage/
 .turbo/
+
+# Prisma client, regenerated on build
+packages/api/src/generated/

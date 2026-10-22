@@ -1,14 +1,16 @@
-// Postgres persistence target (Design §4). The API's in-memory repositories
-// implement the same shapes; this schema is the production adapter. Apply with
-// `prisma migrate` against a running Postgres (not run in CI without a DB).
+// Postgres persistence (Design §4). Implements the same interfaces as the
+// API's in-memory repositories: packages/api/src/persistence/prismaStores.ts.
+// Connection URL lives in prisma.config.ts (Prisma 7). Apply locally with:
+//   npm run db:migrate
 
 generator client {
-  provider = "prisma-client-js"
+  provider     = "prisma-client"
+  output       = "../packages/api/src/generated/prisma"
+  moduleFormat = "cjs"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum GrantStatus {
@@ -25,34 +27,39 @@ enum Environment {
 }
 
 model Grant {
-  id                String        @id // grantId
-  ownershipProof    String
-  ownershipToken    String
-  ownershipVerified Boolean       @default(false)
-  ownershipMethod   String?       // "automatic" | "manual" (how ownershipVerified was set)
-  adminApproved     Boolean       @default(false)
-  status            GrantStatus   @default(pending_owner)
-  notBefore         DateTime
-  notAfter          DateTime
+  id                 String       @id // grantId
+  ownershipProof     String
+  ownershipToken     String
+  ownershipVerified  Boolean      @default(false)
+  ownershipMethod    String? // "automatic" | "manual"
+  adminApproved      Boolean      @default(false)
+  status             GrantStatus  @default(pending_owner)
+  notBefore          DateTime
+  notAfter           DateTime
   allowStateChanging Boolean      @default(false)
-  targets           Target[]
-  chain             ChainLink[]
-  scans             Scan[]
-  audit             AuditEntry[]
-  createdAt         DateTime      @default(now())
+  targets            Target[]
+  chain              ChainLink[]
+  scans              Scan[]
+  audit              AuditEntry[]
+  challenges         OwnerChallenge[]
+  createdAt          DateTime     @default(now())
 }
 
 model Target {
-  id      String  @id @default(cuid())
-  host    String
-  scheme  String  @default("https")
-  port    Int?
-  grant   Grant   @relation(fields: [grantId], references: [id])
-  grantId String
+  id       String @id @default(cuid())
+  position Int
+  host     String
+  scheme   String @default("https")
+  port     Int?
+  grant    Grant  @relation(fields: [grantId], references: [id])
+  grantId  String
+
+  @@unique([grantId, position])
 }
 
 model ChainLink {
   id        String   @id @default(cuid())
+  position  Int
   party     String
   email     String
   role      String // requester | system_owner | platform_owner
@@ -60,44 +67,63 @@ model ChainLink {
   signedAt  DateTime
   grant     Grant    @relation(fields: [grantId], references: [id])
   grantId   String
+
+  @@unique([grantId, position])
+}
+
+// Pending owner sign-off codes. Only an HMAC of the code is stored.
+model OwnerChallenge {
+  id        String   @id
+  grant     Grant    @relation(fields: [grantId], references: [id])
+  grantId   String
+  party     String
+  email     String
+  statement String
+  codeHash  String
+  expiresAt DateTime
+  attempts  Int      @default(0)
+
+  @@index([grantId])
 }
 
 model Engagement {
-  id              String      @id
-  client          String
-  preparedBy      String
-  environment     Environment
+  id               String      @id
+  client           String
+  preparedBy       String
+  environment      Environment
   authorizationRef String
-  windowStart     DateTime
-  windowEnd       DateTime
-  assets          String[]
-  methodologyAr   String
-  methodologyEn   String
-  limitationsAr   String
-  limitationsEn   String
-  scans           Scan[]
+  windowStart      DateTime
+  windowEnd        DateTime
+  assets           String[]
+  methodologyAr    String
+  methodologyEn    String
+  limitationsAr    String
+  limitationsEn    String
 }
 
 model Scan {
-  id           String     @id
-  engagement   Engagement @relation(fields: [engagementId], references: [id])
+  id           String    @id
+  // Plain reference: a scan record is kept even if its engagement is created later.
   engagementId String
-  grant        Grant      @relation(fields: [grantId], references: [id])
+  grant        Grant     @relation(fields: [grantId], references: [id])
   grantId      String
   status       String // queued | running | done | failed
   notTested    String[]
   telemetry    Json?
   findings     Finding[]
-  createdAt    DateTime   @default(now())
+  createdAt    DateTime
+
+  @@index([engagementId])
 }
 
-// Mirrors @secscan/shared Finding (zod). `id` is deterministic per scan+finding,
-// so the primary key is the pair. `reviewQueue` marks findings kept for human
-// review (ScanRecord.review) rather than the client report.
+// Mirrors @secscan/shared Finding (zod). `id` is deterministic per finding,
+// so the primary key is (scanId, id). `reviewQueue` marks findings kept for
+// human review rather than the client report. `position` preserves order.
 model Finding {
   id            String
   scan          Scan    @relation(fields: [scanId], references: [id])
   scanId        String
+  position      Int
   reviewQueue   Boolean @default(false)
   severity      String
   cvssScore     Float?
@@ -123,9 +149,11 @@ model Finding {
   @@id([scanId, id])
 }
 
-// Append-only: the application never issues UPDATE/DELETE on this table.
+// Append-only: the application only INSERTs and SELECTs here. A trigger in
+// the migration rejects UPDATE and DELETE at the database level too.
 model AuditEntry {
   id      String   @id @default(cuid())
+  seq     Int      @default(autoincrement())
   at      DateTime @default(now())
   actor   String
   action  String
@@ -133,5 +161,5 @@ model AuditEntry {
   grant   Grant?   @relation(fields: [grantId], references: [id])
   grantId String?
 
-  @@index([grantId, at])
+  @@index([grantId, seq])
 }

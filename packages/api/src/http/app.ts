@@ -8,6 +8,7 @@ import {
   IdentitiesController, FlowsController,
 } from './controllers';
 import { DomainErrorFilter } from './errors.filter';
+import { PUBLIC_ROUTES, authenticate } from './auth';
 
 /** Build a NestJS (Fastify) app wired to a core graph. */
 export async function buildApp(opts: CoreOptions): Promise<NestFastifyApplication> {
@@ -23,6 +24,22 @@ export async function buildApp(opts: CoreOptions): Promise<NestFastifyApplicatio
     AppModule, new FastifyAdapter(), { logger: false },
   );
   app.useGlobalFilters(new DomainErrorFilter());
+
+  // Bearer-token authentication for every non-public route (see auth.ts).
+  if (core.apiAuth) {
+    const apiAuth = core.apiAuth;
+    app.getHttpAdapter().getInstance().addHook('onRequest', async (request: any, reply: any) => {
+      const path = String(request.url ?? '').split('?')[0];
+      if (PUBLIC_ROUTES.has(`${request.method} ${path}`)) return;
+      const who = authenticate(apiAuth, request.headers['authorization']);
+      if (!who) {
+        reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'authentication required', statusCode: 401 });
+        return reply;
+      }
+      request.secscanActor = who;
+    });
+  }
+
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
   return app;

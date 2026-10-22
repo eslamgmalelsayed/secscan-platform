@@ -54,7 +54,7 @@
 
 ### 2.3 سلسلة التفويض كلها honor-system
 
-> **الحالة: جزئيًا (2026-10-22)** — إثبات الملكية الآلي الفعلي (`engine/ownership.ts`: DNS TXT / well-known / meta)، والتجاوز اليدوي + الموافقة + الإلغاء تتطلب `x-admin-token` (`SECSCAN_ADMIN_TOKEN`)، ولا سرّ بصمة افتراضي. **المتبقي:** OTP/إيميل للمالك، ومصادقة كاملة للـ API.
+> **الحالة: تم (2026-10-22)** — إثبات ملكية آلي فعلي؛ توقيع المالك برمز لمرة واحدة يُرسَل لبريد على نطاق الهدف نفسه (HMAC، صلاحية 10 دقائق، 5 محاولات، الخادم يكتب حلقة التوقيع)؛ مصادقة Bearer لكل المسارات عدا `/health` والفاعل في السجل يُؤخذ من التوكن لا من جسم الطلب؛ التجاوزات اليدوية تتطلب `x-admin-token`.
 
 - `actor` يأتي من جسم الطلب (`actorOf(body)`)؛ `adminApprove` لا يتحقق أن الفاعل أدمن.
 - `recordOwnershipVerified` يقلب علمًا فقط؛ لا يوجد كود يتحقق من DNS TXT / http token / meta tag رغم أن `OwnershipProof` enum موجود.
@@ -156,3 +156,10 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 - `fingerprintSecret` افتراضي `'change-me'` — ارفض الإقلاع بدونه خارج وضع dev.
 - `ScanTelemetry` (§10) موجود ولا يُستخدم؛ اربطه بعدّاد الطلبات في `GuardedClient` حتى يكون «التكلفة لكل نتيجة مؤكدة» رقمًا حقيقيًا من اليوم الأول.
 - `ScansController.run` متزامن داخل طلب HTTP؛ مقبول محليًا، لكن اجعل الـ CLI هو المسار الأساسي الآن بدل الـ API.
+
+## 6. تحديث 2026-10-22 — التخزين والطوابير
+
+- **Postgres:** `packages/api/src/persistence/prismaStores.ts` (Prisma 7 + pg adapter) يطبّق نفس واجهات المستودعات؛ اختبار عقد مشترك (`stores.contract.test.ts`) يشغّل نفس الحالات على الذاكرة وعلى Postgres. سجل التدقيق محمي بـ trigger يرفض UPDATE/DELETE على مستوى قاعدة البيانات.
+- **Redis:** `packages/workers/src/bullmqQueue.ts` (BullMQ 6) يطبّق واجهة `Queue`؛ اختبار عقد مشترك مع `InMemoryQueue`.
+- **التشغيل المحلي:** `npm run services:up` (Postgres + Redis + Mailpit)، `npm run db:migrate`، ثم `npm run start -w @secscan/api` بالمتغيرات في `.env.example`. رموز توقيع المالك تظهر في http://127.0.0.1:8025.
+- **المتبقي:** الواجهة الرسومية، أداة التشغيل بأمر واحد، وتشغيل فعلي على موقع تملكه.

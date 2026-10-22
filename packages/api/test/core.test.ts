@@ -4,7 +4,7 @@ import type { Engagement } from '@secscan/shared';
 import {
   AppendOnlyAuditLog, AuthorizationService, AuthorizationError, LabPolicy, LabPolicyError,
   ReportService, ScanService,
-  InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo,
+  InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo, MemoryMailer,
 } from '../src/core';
 
 const NOW = new Date();
@@ -43,61 +43,61 @@ beforeEach(() => {
 });
 
 describe('authorization lifecycle', () => {
-  it('blocks a scan until ownership + owner-sign + admin-approve, then activates', () => {
-    auth.createGrant(grantInput(), 'a@agency.sa');
-    expect(() => auth.assertScanAllowed('g1')).toThrow(AuthorizationError); // ownership not verified
-    auth.recordOwnershipVerified('g1', 'system');
-    expect(() => auth.assertScanAllowed('g1')).toThrow(/owner has not signed/);
-    auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
-    expect(() => auth.assertScanAllowed('g1')).toThrow(/admin has not approved/);
-    const rec = auth.adminApprove('g1', 'admin');
+  it('blocks a scan until ownership + owner-sign + admin-approve, then activates', async () => {
+    await auth.createGrant(grantInput(), 'a@agency.sa');
+    await expect(auth.assertScanAllowed('g1')).rejects.toThrow(AuthorizationError); // ownership not verified
+    await auth.recordOwnershipVerified('g1', 'system');
+    await expect(auth.assertScanAllowed('g1')).rejects.toThrow(/owner has not signed/);
+    await auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
+    await expect(auth.assertScanAllowed('g1')).rejects.toThrow(/admin has not approved/);
+    const rec = await auth.adminApprove('g1', 'admin');
     expect(rec.grant.status).toBe('active');
-    expect(() => auth.assertScanAllowed('g1')).not.toThrow();
+    await expect(auth.assertScanAllowed('g1')).resolves.toBeDefined();
   });
 
-  it('writes an append-only audit trail in order', () => {
-    auth.createGrant(grantInput(), 'a@agency.sa');
-    auth.recordOwnershipVerified('g1', 'system');
-    auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
-    auth.adminApprove('g1', 'admin');
-    const actions = audit.list('g1').map((e) => e.action);
-    expect(actions).toEqual(['grant_created', 'ownership_recorded_manually', 'owner_signed', 'admin_approved', 'grant_activated']);
+  it('writes an append-only audit trail in order', async () => {
+    await auth.createGrant(grantInput(), 'a@agency.sa');
+    await auth.recordOwnershipVerified('g1', 'system');
+    await auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
+    await auth.adminApprove('g1', 'admin');
+    const actions = (await audit.list('g1')).map((e) => e.action);
+    expect(actions).toEqual(['grant_created', 'ownership_recorded_manually', 'owner_signed_manually', 'admin_approved', 'grant_activated']);
     // the returned list is a copy: mutating it does not change the log
-    audit.list('g1').pop();
-    expect(audit.list('g1').length).toBe(5);
+    (await audit.list('g1')).pop();
+    expect((await audit.list('g1')).length).toBe(5);
   });
 
   it('automatic ownership proof only flips the flag when every target passes, and audits failures', async () => {
-    auth.createGrant(grantInput(), 'a@agency.sa');
+    await auth.createGrant(grantInput(), 'a@agency.sa');
     const fail = await auth.verifyOwnership('g1', 'system', { resolveTxt: async () => [['secscan-verify=wrong']] });
     expect(fail.verification.ok).toBe(false);
-    expect(grants.get('g1')!.ownershipVerified).toBe(false);
+    expect((await grants.get('g1'))!.ownershipVerified).toBe(false);
     const ok = await auth.verifyOwnership('g1', 'system', { resolveTxt: async () => [['secscan-verify=tok']] });
     expect(ok.verification.ok).toBe(true);
-    expect(grants.get('g1')!.ownershipVerified).toBe(true);
-    expect(audit.list('g1').map((e) => e.action)).toEqual(['grant_created', 'ownership_verification_failed', 'ownership_verified']);
+    expect((await grants.get('g1'))!.ownershipVerified).toBe(true);
+    expect((await audit.list('g1')).map((e) => e.action)).toEqual(['grant_created', 'ownership_verification_failed', 'ownership_verified']);
   });
 
-  it('revoke stops a previously-active grant', () => {
-    auth.createGrant(grantInput(), 'a@agency.sa');
-    auth.recordOwnershipVerified('g1', 'system');
-    auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
-    auth.adminApprove('g1', 'admin');
-    auth.revoke('g1', 'admin');
-    expect(() => auth.assertScanAllowed('g1')).toThrow(/not active/);
+  it('revoke stops a previously-active grant', async () => {
+    await auth.createGrant(grantInput(), 'a@agency.sa');
+    await auth.recordOwnershipVerified('g1', 'system');
+    await auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
+    await auth.adminApprove('g1', 'admin');
+    await auth.revoke('g1', 'admin');
+    await expect(auth.assertScanAllowed('g1')).rejects.toThrow(/not active/);
   });
 });
 
-function activateGrant(host = LAB_HOST) {
-  auth.createGrant(grantInput(host), 'a@agency.sa');
-  auth.recordOwnershipVerified('g1', 'system');
-  auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
-  auth.adminApprove('g1', 'admin');
+async function activateGrant(host = LAB_HOST) {
+  await auth.createGrant(grantInput(host), 'a@agency.sa');
+  await auth.recordOwnershipVerified('g1', 'system');
+  await auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
+  await auth.adminApprove('g1', 'admin');
 }
 
 describe('LabPolicy gate (§3.2)', () => {
   it('rejects a target outside the lab allow-list', async () => {
-    activateGrant('evil.example.com');
+    await activateGrant('evil.example.com');
     const svc = new ScanService({
       auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit,
       sender: vulnOrders, fingerprintSecret: 's', resolveHost: () => ['10.0.0.5'],
@@ -107,9 +107,54 @@ describe('LabPolicy gate (§3.2)', () => {
   });
 });
 
+describe('owner sign-off by email code (§6)', () => {
+  function svc(now = () => new Date()) {
+    const mailer = new MemoryMailer();
+    return { mailer, auth: new AuthorizationService(grants, audit, { mailer, secret: 'k', now }) };
+  }
+  const owner = { party: 'Owner', email: 'boss@example.com', statement: 'I authorize testing' };
+  const codeFrom = (m: MemoryMailer) => /code to the requester: (\d{6})/.exec(m.sent.at(-1)!.text)![1];
+
+  it('a correct code appends a server-written system_owner link', async () => {
+    const { mailer, auth: a } = svc();
+    await a.createGrant(grantInput('app.example.com'), 'agency');
+    const { challengeId } = await a.requestOwnerSignature('g1', owner, 'agency');
+    const rec = await a.confirmOwnerSignature('g1', challengeId, codeFrom(mailer), 'agency');
+    const link = rec.grant.chain.find((l) => l.role === 'system_owner')!;
+    expect(link.email).toBe('boss@example.com');
+    expect(rec.grant.status).toBe('pending_owner'); // still needs ownership proof + admin approval
+  });
+
+  it('refuses an owner mailbox that is not on every target domain', async () => {
+    const { auth: a } = svc();
+    await a.createGrant(grantInput('app.example.com'), 'agency');
+    await expect(a.requestOwnerSignature('g1', { ...owner, email: 'boss@gmail.com' }, 'agency')).rejects.toThrow(/domain/);
+    await expect(a.requestOwnerSignature('g1', { ...owner, email: 'boss@notexample.com' }, 'agency')).rejects.toThrow(/domain/);
+  });
+
+  it('locks the challenge after five wrong codes', async () => {
+    const { mailer, auth: a } = svc();
+    await a.createGrant(grantInput('app.example.com'), 'agency');
+    const { challengeId } = await a.requestOwnerSignature('g1', owner, 'agency');
+    const wrong = codeFrom(mailer) === '000000' ? '111111' : '000000';
+    for (let i = 0; i < 4; i++) await expect(a.confirmOwnerSignature('g1', challengeId, wrong, 'agency')).rejects.toThrow(/incorrect/);
+    await expect(a.confirmOwnerSignature('g1', challengeId, wrong, 'agency')).rejects.toThrow(/too many/);
+    await expect(a.confirmOwnerSignature('g1', challengeId, codeFrom(mailer), 'agency')).rejects.toThrow(/unknown/);
+  });
+
+  it('rejects an expired code', async () => {
+    let t = Date.now();
+    const { mailer, auth: a } = svc(() => new Date(t));
+    await a.createGrant(grantInput('app.example.com'), 'agency');
+    const { challengeId } = await a.requestOwnerSignature('g1', owner, 'agency');
+    t += 11 * 60_000;
+    await expect(a.confirmOwnerSignature('g1', challengeId, codeFrom(mailer), 'agency')).rejects.toThrow(/expired/);
+  });
+});
+
 describe('session liveness (§7)', () => {
   it('drops an identity whose liveness probe fails and says so in notTested', async () => {
-    activateGrant(LAB_HOST);
+    await activateGrant(LAB_HOST);
     const sender: Sender = async (req, ident) => {
       if (new URL(req.url).pathname === '/me') return ident.sessionRef === 'sess-alice' ? json(200, '{"me":1}') : json(401, '{}');
       return vulnOrders(req, ident);
@@ -129,7 +174,7 @@ describe('session liveness (§7)', () => {
 
 describe('scope-gated scan + report', () => {
   it('runs on a lab target and confirms a BOLA finding', async () => {
-    activateGrant(LAB_HOST);
+    await activateGrant(LAB_HOST);
     const svc = new ScanService({
       auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit,
       sender: vulnOrders, fingerprintSecret: 's', resolveHost: () => ['10.0.0.5'],
@@ -138,7 +183,7 @@ describe('scope-gated scan + report', () => {
     expect(scan.status).toBe('done');
     expect(scan.findings.length).toBeGreaterThanOrEqual(1);
     expect(scan.findings[0].id).toContain('bola_idor');
-    expect(audit.list('g1').some((e) => e.action === 'scan_run')).toBe(true);
+    expect((await audit.list('g1')).some((e) => e.action === 'scan_run')).toBe(true);
 
     const engagement: Engagement = {
       id: 'E1', client: 'Lab', preparedBy: 'SecScan', assets: [LAB_HOST], environment: 'lab',
@@ -146,8 +191,8 @@ describe('scope-gated scan + report', () => {
       methodology: { ar: 'اختبار صلاحيات', en: 'Authorization testing' },
       limitations: { ar: 'المعمل فقط', en: 'Lab only' },
     } as Engagement;
-    engs.save(engagement);
-    const report = new ReportService(engs, scans).render('E1', scan.id, 'ar');
+    await engs.save(engagement);
+    const report = await new ReportService(engs, scans).render('E1', scan.id, 'ar');
     expect(report).toContain('تقرير تقييم أمني');
     expect(report).toContain('ما الذي لم يُفحص'); // coverage-limits section always present
   });

@@ -7,7 +7,10 @@
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "dev:api": "npm run dev -w @secscan/api",
-    "dev:web": "npm run dev -w @secscan/web"
+    "dev:web": "npm run dev -w @secscan/web",
+    "services:up": "docker compose up -d postgres redis mailpit",
+    "db:migrate": "prisma migrate deploy",
+    "db:test:setup": "node scripts/db-test-setup.mjs"
   },
   "engines": { "node": ">=22" }
 }

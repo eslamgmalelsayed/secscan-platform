@@ -10,10 +10,10 @@ import type { EngagementRepo, ScanRepo } from './repositories';
 export class ReportService {
   constructor(private engagements: EngagementRepo, private scans: ScanRepo) {}
 
-  render(engagementId: string, scanId: string, lang: Lang = 'ar'): string {
-    const engagement = this.engagements.get(engagementId);
+  async render(engagementId: string, scanId: string, lang: Lang = 'ar'): Promise<string> {
+    const engagement = await this.engagements.get(engagementId);
     if (!engagement) throw new Error(`engagement ${engagementId} not found`);
-    const scan = this.scans.get(scanId);
+    const scan = await this.scans.get(scanId);
     if (!scan) throw new Error(`scan ${scanId} not found`);
     const input: ReportInput = { engagement: engagement as Engagement, findings: [...scan.findings, ...(scan.review ?? [])] };
     return renderMarkdown(input, { lang, notTested: scan.notTested });

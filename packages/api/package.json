@@ -5,26 +5,34 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
+    "build": "npm run generate && tsc -p tsconfig.json",
+    "test": "npm run generate && vitest run",
     "smoke": "node dist/scripts/smoke.js",
-    "start": "node dist/http/main.js"
+    "start": "node dist/http/main.js",
+    "generate": "prisma generate --config ../../prisma.config.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.2.0",
     "@nestjs/core": "^12.2.0",
     "@nestjs/platform-fastify": "^12.2.0",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "@secscan/checks": "*",
     "@secscan/engine": "*",
     "@secscan/importers": "*",
     "@secscan/report": "*",
     "@secscan/shared": "*",
+    "nodemailer": "^10.2.1",
+    "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/nodemailer": "^8.0.2",
+    "@types/pg": "^8.23.1",
+    "prisma": "^7.10.1",
     "typescript": "^5.7.0",
     "vitest": "^5.0.5"
   }

@@ -88,14 +88,14 @@ describe('benchmark fixture: exact precision and recall', () => {
   it('reports every known weakness and nothing on the clean surface', async () => {
     const grants = new InMemoryGrantRepo(); const scans = new InMemoryScanRepo(); const audit = new AppendOnlyAuditLog();
     const auth = new AuthorizationService(grants, audit);
-    auth.createGrant({
+    await auth.createGrant({
       grantId: 'bench', targets: [{ host, scheme: 'http', port: Number(base.split(':')[2]) }], ownershipProof: 'http_token', ownershipToken: 't',
       chain: [{ party: 'A', email: 'a@a.sa', role: 'requester', signedAt: NOW.toISOString(), statement: 'r' }],
       notBefore: new Date(NOW.getTime() - 3.6e6).toISOString(), notAfter: new Date(NOW.getTime() + 3.6e6).toISOString(),
     }, 'a@a.sa');
-    auth.recordOwnershipVerified('bench', 'admin');
-    auth.ownerSign('bench', { party: 'Owner', email: 'o@o.sa', role: 'system_owner', signedAt: NOW.toISOString(), statement: 'ok' }, 'o@o.sa');
-    auth.adminApprove('bench', 'admin');
+    await auth.recordOwnershipVerified('bench', 'admin');
+    await auth.ownerSign('bench', { party: 'Owner', email: 'o@o.sa', role: 'system_owner', signedAt: NOW.toISOString(), statement: 'ok' }, 'o@o.sa');
+    await auth.adminApprove('bench', 'admin');
 
     const { store, identities, liveness } = loadIdentities({
       'customer/t1': { cookies: { sid: 'alice' }, liveness: `${base}/api/me` },

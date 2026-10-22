@@ -13,7 +13,7 @@ import {
   type HostResolver, type Identity, type PacingOptions, type RecordedRequest, type Sender,
 } from '@secscan/engine';
 import { runChecks } from '@secscan/checks';
-import { AppendOnlyAuditLog } from './audit';
+import type { AuditStore } from './audit';
 import { AuthorizationService } from './authorizationService';
 import { LabPolicy } from './labPolicy';
 import type { ScanRecord, ScanRepo } from './repositories';
@@ -38,7 +38,7 @@ export interface ScanServiceDeps {
   auth: AuthorizationService;
   lab: LabPolicy;
   scans: ScanRepo;
-  audit: AppendOnlyAuditLog;
+  audit: AuditStore;
   sender: Sender;
   fingerprintSecret: string;
   resolveHost?: HostResolver;
@@ -52,7 +52,7 @@ export class ScanService {
   constructor(private d: ScanServiceDeps) {}
 
   async run(req: ScanRequest): Promise<ScanRecord> {
-    const rec = this.d.auth.assertScanAllowed(req.grantId);
+    const rec = await this.d.auth.assertScanAllowed(req.grantId);
 
     // §3.2 hard gate: every grant target AND every flow host must be allowed.
     for (const t of rec.grant.targets) this.d.lab.assertTargetAllowed(t.host);
@@ -93,8 +93,8 @@ export class ScanService {
         findings: [], notTested: client.refused.map((r) => `${r.decision}: ${r.reason}`),
         createdAt: new Date().toISOString(),
       };
-      this.d.scans.save(failed);
-      this.d.audit.append({ actor: req.actor, action: 'scan_failed', grantId: req.grantId, detail: String(e) });
+      await this.d.scans.save(failed);
+      await this.d.audit.append({ actor: req.actor, action: 'scan_failed', grantId: req.grantId, detail: String(e) });
       return failed;
     }
 
@@ -128,8 +128,8 @@ export class ScanService {
       },
       createdAt: new Date().toISOString(),
     };
-    this.d.scans.save(scan);
-    this.d.audit.append({
+    await this.d.scans.save(scan);
+    await this.d.audit.append({
       actor: req.actor, action: 'scan_run', grantId: req.grantId,
       detail: `confirmed=${findings.length} (authz=${result.reportReady.length} checks=${checksReady}) review=${result.needsReview.length + checksReview} notTested=${notTested.length}`,
     });

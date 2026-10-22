@@ -1,7 +1,8 @@
 /**
  * Persistence abstraction. In-memory implementations run the whole platform
- * without a database (for tests and local dev); a Prisma/Postgres adapter
- * (see prisma/schema.prisma) implements the same interfaces in production.
+ * without a database (tests, local dev); `PrismaStores` (prismaRepositories.ts)
+ * implements the same interfaces on Postgres. All methods are async so a real
+ * database can sit behind them.
  */
 import type { AuthorizationGrant } from '@secscan/engine';
 import type { Engagement, Finding } from '@secscan/shared';
@@ -9,6 +10,8 @@ import type { Engagement, Finding } from '@secscan/shared';
 export interface GrantRecord {
   grant: AuthorizationGrant;
   ownershipVerified: boolean;
+  /** How ownershipVerified was set: an automatic proof or an admin override. */
+  ownershipMethod?: 'automatic' | 'manual';
   adminApproved: boolean;
 }
 
@@ -26,39 +29,43 @@ export interface ScanRecord {
 }
 
 export interface GrantRepo {
-  save(rec: GrantRecord): void;
-  get(grantId: string): GrantRecord | undefined;
-  list(): GrantRecord[];
+  save(rec: GrantRecord): Promise<void>;
+  get(grantId: string): Promise<GrantRecord | undefined>;
+  list(): Promise<GrantRecord[]>;
 }
 export interface EngagementRepo {
-  save(e: Engagement): void;
-  get(id: string): Engagement | undefined;
-  list(): Engagement[];
+  save(e: Engagement): Promise<void>;
+  get(id: string): Promise<Engagement | undefined>;
+  list(): Promise<Engagement[]>;
 }
 export interface ScanRepo {
-  save(s: ScanRecord): void;
-  get(id: string): ScanRecord | undefined;
-  list(engagementId?: string): ScanRecord[];
+  save(s: ScanRecord): Promise<void>;
+  get(id: string): Promise<ScanRecord | undefined>;
+  list(engagementId?: string): Promise<ScanRecord[]>;
 }
+
+/** Deep copy so callers never mutate stored state through a returned object
+ *  (a database adapter has this property naturally; the in-memory one must too). */
+const clone = <T>(v: T): T => structuredClone(v);
 
 export class InMemoryGrantRepo implements GrantRepo {
   private m = new Map<string, GrantRecord>();
-  save(rec: GrantRecord) { this.m.set(rec.grant.grantId, rec); }
-  get(id: string) { return this.m.get(id); }
-  list() { return [...this.m.values()]; }
+  async save(rec: GrantRecord) { this.m.set(rec.grant.grantId, clone(rec)); }
+  async get(id: string) { const r = this.m.get(id); return r && clone(r); }
+  async list() { return [...this.m.values()].map(clone); }
 }
 export class InMemoryEngagementRepo implements EngagementRepo {
   private m = new Map<string, Engagement>();
-  save(e: Engagement) { this.m.set(e.id, e); }
-  get(id: string) { return this.m.get(id); }
-  list() { return [...this.m.values()]; }
+  async save(e: Engagement) { this.m.set(e.id, clone(e)); }
+  async get(id: string) { const e = this.m.get(id); return e && clone(e); }
+  async list() { return [...this.m.values()].map(clone); }
 }
 export class InMemoryScanRepo implements ScanRepo {
   private m = new Map<string, ScanRecord>();
-  save(s: ScanRecord) { this.m.set(s.id, s); }
-  get(id: string) { return this.m.get(id); }
-  list(engagementId?: string) {
-    const all = [...this.m.values()];
+  async save(s: ScanRecord) { this.m.set(s.id, clone(s)); }
+  async get(id: string) { const s = this.m.get(id); return s && clone(s); }
+  async list(engagementId?: string) {
+    const all = [...this.m.values()].map(clone);
     return engagementId ? all.filter((s) => s.engagementId === engagementId) : all;
   }
 }
