@@ -10,7 +10,8 @@
     "dist:mac": "electron-builder --mac --publish never",
     "dist:linux": "electron-builder --linux --publish never"
   },
-  "devDependencies": {
+  "comment": "electron/electron-builder are optional so a failed download never blocks the core install; the browser path (npm run serve) needs neither.",
+  "optionalDependencies": {
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
   },

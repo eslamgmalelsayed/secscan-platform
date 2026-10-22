@@ -64,10 +64,10 @@ export class PrismaGrantRepo implements GrantRepo {
 function toGrantRecord(row: Prisma.GrantGetPayload<{ include: typeof grantInclude }>): GrantRecord {
   const grant: AuthorizationGrant = {
     grantId: row.id,
-    targets: row.targets.map((t) => ({ host: t.host, scheme: t.scheme as 'http' | 'https', port: t.port })),
+    targets: row.targets.map((t: any) => ({ host: t.host, scheme: t.scheme as 'http' | 'https', port: t.port })),
     ownershipProof: row.ownershipProof as AuthorizationGrant['ownershipProof'],
     ownershipToken: row.ownershipToken,
-    chain: row.chain.map((l): AuthorizationChainLink => ({
+    chain: row.chain.map((l: any): AuthorizationChainLink => ({
       party: l.party, email: l.email, role: l.role as AuthorizationChainLink['role'],
       signedAt: iso(l.signedAt), statement: l.statement,
     })),
@@ -200,8 +200,8 @@ function toScan(r: Prisma.ScanGetPayload<{ include: { findings: true } }>): Scan
   return {
     id: r.id, engagementId: r.engagementId, grantId: r.grantId,
     status: r.status as ScanRecord['status'],
-    findings: r.findings.filter((f) => !f.reviewQueue).map(toFinding),
-    review: r.findings.filter((f) => f.reviewQueue).map(toFinding),
+    findings: r.findings.filter((f: any) => !f.reviewQueue).map(toFinding),
+    review: r.findings.filter((f: any) => f.reviewQueue).map(toFinding),
     notTested: r.notTested,
     ...(r.telemetry != null ? { telemetry: r.telemetry as Record<string, number | null> } : {}),
     createdAt: iso(r.createdAt),

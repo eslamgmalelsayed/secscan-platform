@@ -3,7 +3,6 @@ import { randomBytes } from 'node:crypto';
 import { SecretStore, createHttpSender, loadIdentities } from '@secscan/engine';
 import { RedisStopSignal, scanQueueProducer } from '@secscan/workers';
 import { ConsoleMailer, LabPolicy, SmtpMailer, type Mailer } from '../core';
-import { createPrismaStores } from '../persistence/prismaStores';
 import { buildApp } from './app';
 import { parseApiTokens } from './auth';
 
@@ -57,7 +56,11 @@ async function main() {
   else if (process.env.SECSCAN_MAILER === 'console') { mailer = new ConsoleMailer(); warn('owner codes are printed to this log (SECSCAN_MAILER=console)'); }
   else warn('no mailer configured; owner sign-off by email is disabled (manual admin path only)');
 
-  const db = process.env.DATABASE_URL ? createPrismaStores(process.env.DATABASE_URL) : null;
+  // Postgres is loaded ONLY when DATABASE_URL is set, so the default in-memory /
+  // desktop run never imports @prisma/client (no `prisma generate` needed).
+  const db = process.env.DATABASE_URL
+    ? (await import('../persistence/prismaStores')).createPrismaStores(process.env.DATABASE_URL)
+    : null;
   if (db) await db.db.$queryRawUnsafe('SELECT 1'); // fail fast on a bad URL
   else warn('DATABASE_URL not set; state is in memory and is lost on restart');
 

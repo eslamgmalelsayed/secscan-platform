@@ -5,12 +5,12 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "npm run generate && tsc -p tsconfig.json",
-    "test": "npm run generate && vitest run",
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
     "smoke": "node dist/scripts/smoke.js",
     "start": "node dist/http/main.js",
     "start:worker": "node dist/worker/main.js",
-    "generate": "prisma generate --config ../../prisma.config.ts"
+    "db:generate": "prisma generate --config ../../prisma.config.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.2.0",

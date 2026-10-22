@@ -40,8 +40,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Generate Prisma client
-        run: npm run generate -w @secscan/api
+      - name: Generate Prisma client (real, for the Postgres-backed tests)
+        run: npm run db:generate -w @secscan/api
       - name: Apply migrations
         run: npm run db:migrate
       - name: Build (all packages + web)
