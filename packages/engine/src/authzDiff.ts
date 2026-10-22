@@ -7,11 +7,18 @@
  * payload — we re-send the owner's own authorized traffic, in scope, and
  * compare. A finding requires a denied/anonymous reference (so a public page
  * is not mistaken for a bypass) and deterministic reproduction.
+ *
+ * Guard against the per-session false positive (review 2.1): an equal body on
+ * a request that names NO object (`/api/me`) is "same data", not a bypass.
+ * Such a request is never a confirmed bola_idor/cross_tenant. Between two
+ * identities of the SAME role it is dropped; across roles it is kept as a
+ * `likely` function-level candidate for human review, never auto-reported.
  */
-import { Finding, type Severity, controlsFor, cvss31, type Cvss31Metrics, type FindingCategory } from '@secscan/shared';
+import { Finding, type Confidence, type Severity, controlsFor, cvss31, type Cvss31Metrics } from '@secscan/shared';
 import { GuardedClient } from './client';
 import type { Identity, RecordedRequest, RecordedResponse } from './http';
 import { isAnonymous } from './http';
+import { requestHasObjectIdentifier } from './identifier';
 import { bodyDigest } from './normalize';
 
 export interface DiffConfig {
@@ -80,6 +87,7 @@ export class AuthorizationDiffer {
 
     let type: AccessFindingType;
     let severity: Severity;
+    let confidence: Confidence = 'confirmed';
     let last: RecordedResponse | null;
 
     if (isAnonymous(challenger)) {
@@ -91,16 +99,23 @@ export class AuthorizationDiffer {
       last = r.last;
     } else {
       if (anonPublic) return null; // same for everyone => public, not a bypass
+      const namesObject = requestHasObjectIdentifier(reqAsOwner);
+      // No object in the request + same role: the server can only key on the
+      // session, so an equal body is the same data twice. Not a finding.
+      if (!namesObject && challenger.role === owner.role) return null;
       const r = await this.reproduce(reqAsOwner, challenger, baseDigest);
       if (r.matches < this.cfg.replaysForConfirmation) return null;
       const crossTenant = !!challenger.tenant && !!owner.tenant && challenger.tenant !== owner.tenant;
       type = crossTenant ? 'cross_tenant' : 'bola_idor';
       severity = crossTenant ? 'critical' : 'high';
+      // Different role but no object named: could be function-level access
+      // (customer sees an admin page) or identically seeded accounts. A human decides.
+      if (!namesObject) confidence = 'likely';
       last = r.last;
     }
 
     return buildFinding({
-      type, severity, reqAsOwner, owner, challenger, baseline, exploit: last!,
+      type, severity, confidence, reqAsOwner, owner, challenger, baseline, exploit: last!,
       baseDigest, grantFingerprint: this.grantFingerprint,
     });
   }
@@ -128,7 +143,7 @@ const TEXT: Record<AccessFindingType, { titleAr: string; titleEn: string; impAr:
 };
 
 function buildFinding(a: {
-  type: AccessFindingType; severity: Severity; reqAsOwner: RecordedRequest;
+  type: AccessFindingType; severity: Severity; confidence: Confidence; reqAsOwner: RecordedRequest;
   owner: Identity; challenger: Identity; baseline: RecordedResponse;
   exploit: RecordedResponse; baseDigest: string; grantFingerprint: string;
 }): Finding {
@@ -140,7 +155,7 @@ function buildFinding(a: {
     id: `AC-${a.type}-${idSuffix}`,
     title: { ar: t.titleAr, en: t.titleEn },
     severity: a.severity,
-    confidence: 'confirmed',
+    confidence: a.confidence,
     asset: new URL(a.reqAsOwner.url).host,
     location: `${a.reqAsOwner.method} ${new URL(a.reqAsOwner.url).pathname}`,
     description: {
@@ -157,6 +172,9 @@ function buildFinding(a: {
       { kind: 'response', label: 'baseline body sha256', content: a.baseDigest },
       { kind: 'request', label: 'replayed as challenger', content: `${a.reqAsOwner.method} ${a.reqAsOwner.url} as ${who(a.challenger)} -> ${a.exploit.status}` },
       { kind: 'note', label: 'grant', content: `fingerprint ${a.grantFingerprint.slice(0, 16)}…` },
+      ...(a.confidence !== 'confirmed'
+        ? [{ kind: 'note' as const, label: 'review', content: 'request names no object identifier; equal body across roles may be function-level access or identically seeded test accounts' }]
+        : []),
     ],
     cvss: cvss31(CVSS_BY_TYPE[a.type]),
     controls: controlsFor(a.type === 'missing_auth' ? 'missing_auth' : 'access_control'),

@@ -84,3 +84,64 @@ describe('AuthorizationDiffer', () => {
     await expect(differ(ordersApp(false)).testObjectAccess(out, OWNER, BOB)).rejects.toThrow(/deny_no_grant/);
   });
 });
+
+/** A SECURE app: every session gets only its own profile. `distinctIds`
+ *  controls whether the two test accounts differ in id/created_at at all. */
+function profileApp(distinctIds: boolean): Sender {
+  return async (req: RecordedRequest, ident: Identity) => {
+    const path = new URL(req.url).pathname;
+    if (!ident.sessionRef) return json(401, '{"error":"login"}');
+    if (path === '/api/me') {
+      const alice = { id: '6f1c2a3e-1111-4c5d-8e9f-aaaaaaaaaaaa', name: 'Customer', plan: 'free', created_at: '2026-01-01T00:00:00Z' };
+      const bob = distinctIds
+        ? { id: '7a2d3b4f-2222-4c5d-8e9f-bbbbbbbbbbbb', name: 'Customer', plan: 'free', created_at: '2026-03-05T10:00:00Z' }
+        : alice; // two test accounts seeded identically
+      return json(200, JSON.stringify(ident.sessionRef === 'sess-alice' ? alice : bob));
+    }
+    if (path === '/orders') {
+      // vulnerable: ?id= is trusted without an ownership check
+      const id = new URL(req.url).searchParams.get('id');
+      return json(200, `{"order":${id},"buyer":"alice","request_id":"${ident.sessionRef}-${Math.random()}"}`);
+    }
+    return json(404, '{}');
+  };
+}
+
+describe('AuthorizationDiffer — false-positive guards (review 2.1)', () => {
+  const ME: RecordedRequest = { method: 'GET', url: `https://${HOST}/api/me`, capturedAsRole: 'customer', capturedAsTenant: 't1' };
+
+  it('does not report a secure per-session endpoint whose bodies differ only in id/timestamps', async () => {
+    const f = await differ(profileApp(true)).testObjectAccess(ME, OWNER, BOB);
+    expect(f).toBeNull();
+  });
+
+  it('does not report a per-session endpoint with no object identifier in the request, even if bodies are identical', async () => {
+    const f = await differ(profileApp(false)).testObjectAccess(ME, OWNER, BOB);
+    expect(f).toBeNull();
+  });
+
+  it('still reports IDOR when the identifier is a query parameter and volatile fields differ', async () => {
+    const byId: RecordedRequest = { method: 'GET', url: `https://${HOST}/orders?id=42`, capturedAsRole: 'customer', capturedAsTenant: 't1' };
+    const f = await differ(profileApp(true)).testObjectAccess(byId, OWNER, BOB);
+    expect(f).not.toBeNull();
+    expect(f!.id).toContain('bola_idor');
+  });
+});
+
+describe('AuthorizationDiffer — cross-role without an object identifier', () => {
+  it('yields a `likely` candidate for review, never a confirmed finding', async () => {
+    // /admin/settings has no identifier; a customer receiving the admin body is
+    // function-level access OR identical seeds — a human must decide.
+    const app: Sender = async (req, ident) => {
+      if (!ident.sessionRef) return json(401, '{}');
+      if (new URL(req.url).pathname === '/admin/settings') return json(200, '{"maintenance":false}');
+      return json(404, '{}');
+    };
+    const ADMIN: Identity = { role: 'admin', tenant: 't1', sessionRef: 'sess-admin' };
+    const req: RecordedRequest = { method: 'GET', url: `https://${HOST}/admin/settings`, capturedAsRole: 'admin', capturedAsTenant: 't1' };
+    const f = await differ(app).testObjectAccess(req, ADMIN, BOB);
+    expect(f).not.toBeNull();
+    expect(f!.confidence).toBe('likely');
+    expect(f!.evidence.some((e) => e.label === 'review')).toBe(true);
+  });
+});
