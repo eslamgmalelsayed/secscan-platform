@@ -21,6 +21,49 @@ export interface ServiceScanOptions {
 }
 
 export interface OpenPort { port: number; open: true }
+export interface HostServices { host: string; ports: number[] }
+
+/** Expand an IPv4 CIDR (e.g. 192.168.1.0/24) to its usable host addresses.
+ *  Capped so a careless /8 can't be expanded; callers pass a LAN-sized range. */
+export function expandCidrV4(cidr: string, maxHosts = 1024): string[] {
+  const [addr, bitsRaw] = cidr.split('/');
+  const bits = Number(bitsRaw);
+  const octets = addr.split('.').map(Number);
+  if (octets.length !== 4 || octets.some((o) => Number.isNaN(o) || o < 0 || o > 255) || Number.isNaN(bits) || bits < 0 || bits > 32) {
+    throw new Error(`invalid IPv4 CIDR: ${cidr}`);
+  }
+  const base = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0;
+  const size = 2 ** (32 - bits);
+  const count = Math.max(0, size - 2); // drop network + broadcast
+  if (count > maxHosts) throw new Error(`CIDR ${cidr} expands to ${count} hosts; max ${maxHosts}`);
+  const net = (base >>> (32 - bits)) << (32 - bits);
+  const out: string[] = [];
+  for (let i = 1; i <= count; i++) { const a = (net + i) >>> 0; out.push(`${(a >>> 24) & 255}.${(a >>> 16) & 255}.${(a >>> 8) & 255}.${a & 255}`); }
+  return out;
+}
+
+/**
+ * LAN discovery (on-network agent): a non-destructive connect scan across every
+ * host in an authorized CIDR. Hosts with no open port are omitted. Bounded by
+ * the host cap in expandCidrV4 and by `concurrency`. The agent only runs this
+ * against a range the operator is authorized for.
+ */
+export async function discoverSubnet(cidr: string, opts: ServiceScanOptions = {}): Promise<HostServices[]> {
+  const hosts = expandCidrV4(cidr);
+  const out: HostServices[] = [];
+  const queue = [...hosts];
+  const concurrency = Math.max(1, opts.concurrency ?? 64);
+  async function worker() {
+    for (;;) {
+      const host = queue.shift();
+      if (host === undefined) return;
+      const open = await discoverServices(host, { ...opts, concurrency: 8 });
+      if (open.length) out.push({ host, ports: open.map((o) => o.port) });
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, hosts.length) }, worker));
+  return out.sort((a, b) => a.host.localeCompare(b.host, undefined, { numeric: true }));
+}
 
 function probe(host: string, port: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
