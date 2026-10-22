@@ -45,6 +45,9 @@ const QuickBody = z.object({
   url: z.string().url(),
   maxPages: z.number().int().positive().max(200).optional(),
   identities: z.array(IdentitySchema).optional(),
+  /** Optional labelled flows; when given they are scanned as-is (confirmed authz
+   *  findings possible) instead of crawling the surface. */
+  flows: z.array(FlowSchema).optional(),
 });
 const LangSchema = z.enum(['ar', 'en']).default('ar');
 const ConfirmBody = z.object({ challengeId: z.string().min(1), code: z.string().min(1).max(12) });
@@ -251,9 +254,10 @@ export class ScansController {
       limitations: { ar: 'السطح العام فقط ما لم تُضف هويات', en: 'Public surface only unless identities are added' },
     }));
 
+    const labelled = input.flows ?? [];
     const scan = await this.core.scan.enqueue({
-      engagementId, grantId, flows: [], identities: input.identities ?? this.core.identities,
-      rootUrl: input.url, discover: { maxPages: input.maxPages }, actor,
+      engagementId, grantId, flows: labelled, identities: input.identities ?? this.core.identities,
+      rootUrl: input.url, discover: labelled.length ? undefined : { maxPages: input.maxPages }, actor,
     });
     return {
       id: scan.id, status: scan.status, grantId, engagementId,
