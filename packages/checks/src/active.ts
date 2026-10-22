@@ -11,7 +11,7 @@
 import { randomBytes } from 'node:crypto';
 import type { Finding } from '@secscan/shared';
 import { bodyDigest, type RecordedRequest } from '@secscan/engine';
-import { build, header, safeSend, type CheckContext } from './context';
+import { build, header, identityFor, safeSend, type CheckContext } from './context';
 
 const t = (ar: string, en: string) => ({ ar, en });
 
@@ -36,7 +36,7 @@ export async function reflectedInput(ctx: CheckContext): Promise<Finding[]> {
     for (const [name] of params) {
       const marker = 'sxz' + randomBytes(4).toString('hex');
       const probe: RecordedRequest = { ...flow, url: withParam(flow.url, name, marker) };
-      const resp = await safeSend(ctx, probe);
+      const resp = await safeSend(ctx, probe, identityFor(ctx, flow));
       if (!resp) continue;
       const ct = (header(resp, 'content-type') ?? '').toLowerCase();
       if (resp.body.includes(marker) && ct.includes('html')) {
@@ -73,13 +73,13 @@ export async function sqliDifferential(ctx: CheckContext): Promise<Finding[]> {
     if (flow.method.toUpperCase() !== 'GET') continue;
     let entries: [string, string][];
     try { entries = [...new URL(flow.url).searchParams.entries()]; } catch { continue; }
+    const as = identityFor(ctx, flow);
+    const baseline = await safeSend(ctx, flow, as); // one baseline per flow, not per param
+    if (!baseline) continue;
+    const baseDigest = digest(baseline);
     for (const [name, baseVal] of entries) {
-      const baseline = await safeSend(ctx, flow);
-      if (!baseline) continue;
-      const baseDigest = digest(baseline);
-
       // error-based
-      const errResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + "'") });
+      const errResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + "'") }, as);
       if (errResp && SQL_ERRORS.some((s) => errResp.body.toLowerCase().includes(s))) {
         out.push(build({
           category: 'injection', severity: 'high', confidence: 'likely',
@@ -98,8 +98,8 @@ export async function sqliDifferential(ctx: CheckContext): Promise<Finding[]> {
       // boolean-based, reproduced twice
       let matches = 0;
       for (let i = 0; i < 2; i++) {
-        const tResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + SQLI_TRUE) });
-        const fResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + SQLI_FALSE) });
+        const tResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + SQLI_TRUE) }, as);
+        const fResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + SQLI_FALSE) }, as);
         if (!tResp || !fResp) break;
         if (digest(tResp) === baseDigest && digest(fResp) !== baseDigest) matches++;
         else break;

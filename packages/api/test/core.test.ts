@@ -96,6 +96,26 @@ describe('LabPolicy gate (§3.2)', () => {
   });
 });
 
+describe('session liveness (§7)', () => {
+  it('drops an identity whose liveness probe fails and says so in notTested', async () => {
+    activateGrant(LAB_HOST);
+    const sender: Sender = async (req, ident) => {
+      if (new URL(req.url).pathname === '/me') return ident.sessionRef === 'sess-alice' ? json(200, '{"me":1}') : json(401, '{}');
+      return vulnOrders(req, ident);
+    };
+    const svc = new ScanService({
+      auth, lab: new LabPolicy(false, [LAB_HOST]), scans, audit, sender, fingerprintSecret: 's',
+      liveness: { 'sess-alice': `https://${LAB_HOST}/me`, 'sess-bob': `https://${LAB_HOST}/me` },
+      pacing: { requestsPerSecond: 1000 },
+    });
+    const scan = await svc.run({ engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin', skipChecks: true });
+    expect(scan.notTested.some((n) => n.includes("session 'sess-bob' failed its liveness probe"))).toBe(true);
+    // bob is gone, so only the anonymous challenger remains and orders/42 needs login -> no IDOR claimed
+    expect(scan.findings).toHaveLength(0);
+    expect(scan.telemetry?.requests).toBeGreaterThan(0);
+  });
+});
+
 describe('scope-gated scan + report', () => {
   it('runs on a lab target and confirms a BOLA finding', async () => {
     activateGrant(LAB_HOST);

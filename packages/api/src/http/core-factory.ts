@@ -1,5 +1,5 @@
 /** Builds the core service graph used by both the HTTP app and the smoke test. */
-import type { HostResolver, Sender } from '@secscan/engine';
+import type { HostResolver, PacingOptions, Sender } from '@secscan/engine';
 import {
   AppendOnlyAuditLog, AuthorizationService, LabPolicy, ReportService, ScanService,
   InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo,
@@ -10,6 +10,8 @@ export interface CoreOptions {
   sender: Sender;
   fingerprintSecret: string;
   resolveHost?: HostResolver;
+  pacing?: Pick<PacingOptions, 'requestsPerSecond' | 'maxDurationMs'>;
+  liveness?: Record<string, string>;
 }
 
 export interface CoreGraph {
@@ -32,6 +34,7 @@ export function buildCore(opts: CoreOptions): CoreGraph {
   const scan = new ScanService({
     auth, lab: opts.lab, scans, audit,
     sender: opts.sender, fingerprintSecret: opts.fingerprintSecret, resolveHost: opts.resolveHost,
+    pacing: opts.pacing, liveness: opts.liveness,
   });
   const report = new ReportService(engagements, scans);
   return { audit, grants, engagements, scans, auth, scan, report, lab: opts.lab };

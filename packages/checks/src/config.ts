@@ -6,7 +6,7 @@
  */
 import type { Finding } from '@secscan/shared';
 import type { RecordedRequest } from '@secscan/engine';
-import { build, header, safeSend, type CheckContext } from './context';
+import { build, header, identityFor, safeSend, type CheckContext } from './context';
 
 const t = (ar: string, en: string) => ({ ar, en });
 const CANARY = 'https://secscan-canary.example';
@@ -25,7 +25,7 @@ export async function corsMisconfig(ctx: CheckContext): Promise<Finding[]> {
     if (seen.has(flow.url)) continue;
     seen.add(flow.url);
     const probe: RecordedRequest = { ...flow, headers: { ...(flow.headers ?? {}), origin: CANARY } };
-    const resp = await safeSend(ctx, probe);
+    const resp = await safeSend(ctx, probe, identityFor(ctx, flow)); // authenticated CORS is the case that matters
     if (!resp) continue;
     const acao = (header(resp, 'access-control-allow-origin') ?? '').trim();
     const acac = (header(resp, 'access-control-allow-credentials') ?? '').toLowerCase();
@@ -55,7 +55,7 @@ export async function openRedirect(ctx: CheckContext): Promise<Finding[]> {
     for (const [name] of params) {
       if (!REDIRECT_PARAMS.has(name.toLowerCase())) continue;
       const probe: RecordedRequest = { ...flow, url: withParam(flow.url, name, `${CANARY}/benign`) };
-      const resp = await safeSend(ctx, probe);
+      const resp = await safeSend(ctx, probe, identityFor(ctx, flow));
       if (!resp) continue;
       const loc = (header(resp, 'location') ?? '').toLowerCase();
       if (resp.status >= 300 && resp.status < 400 && loc.startsWith(CANARY.toLowerCase())) {

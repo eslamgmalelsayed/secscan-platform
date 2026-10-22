@@ -4,6 +4,7 @@
  * through the guarded client, so scope is enforced regardless of which run.
  */
 import { type Finding, reportable, sortFindings } from '@secscan/shared';
+import { ScanStopped } from '@secscan/engine';
 import type { CheckContext } from './context';
 import { securityHeaders, cookies, tlsRedirect, infoDisclosure, secretsInResponse } from './passive';
 import { corsMisconfig, openRedirect } from './config';
@@ -31,18 +32,22 @@ export async function runChecks(ctx: CheckContext, opts: RunChecksOptions = {}):
     jwt: opts.jwt ?? true,
   };
   const findings: Finding[] = [];
-  if (run.passive) {
-    for (const check of [securityHeaders, cookies, tlsRedirect, infoDisclosure, secretsInResponse]) {
+  const notes: string[] = [];
+  const plan: [string, boolean, (c: CheckContext) => Promise<Finding[]>][] = [
+    ['securityHeaders', run.passive, securityHeaders], ['cookies', run.passive, cookies],
+    ['tlsRedirect', run.passive, tlsRedirect], ['infoDisclosure', run.passive, infoDisclosure],
+    ['secretsInResponse', run.passive, secretsInResponse],
+    ['corsMisconfig', run.config, corsMisconfig], ['openRedirect', run.config, openRedirect],
+    ['reflectedInput', run.active, reflectedInput], ['sqliDifferential', run.active, sqliDifferential],
+  ];
+  for (const [name, enabled, check] of plan) {
+    if (!enabled) continue;
+    try {
       findings.push(...(await check(ctx)));
+    } catch (e) {
+      if (e instanceof ScanStopped) { notes.push(`stopped: ${e.reason} during check '${name}'; later checks not run`); break; }
+      notes.push(`error: check '${name}' failed: ${String(e).slice(0, 200)}`);
     }
-  }
-  if (run.config) {
-    findings.push(...(await corsMisconfig(ctx)));
-    findings.push(...(await openRedirect(ctx)));
-  }
-  if (run.active) {
-    findings.push(...(await reflectedInput(ctx)));
-    findings.push(...(await sqliDifferential(ctx)));
   }
   if (run.jwt) findings.push(...jwtChecks(ctx));
 
@@ -51,5 +56,5 @@ export async function runChecks(ctx: CheckContext, opts: RunChecksOptions = {}):
   const reportReady = sortFindings(reportable(deduped));
   const ready = new Set(reportReady.map((f) => f.id));
   const needsReview = sortFindings(deduped.filter((f) => !ready.has(f.id)));
-  return { reportReady, needsReview, notTested: ctx.client.refused.map((r) => `${r.decision}: ${r.reason}`) };
+  return { reportReady, needsReview, notTested: [...notes, ...ctx.client.refused.map((r) => `${r.decision}: ${r.reason}`)] };
 }

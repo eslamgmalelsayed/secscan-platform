@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w @secscan/shared -w @secscan/engine -w @secscan/checks -w @secscan/importers -w @secscan/report -w @secscan/workers -w @secscan/api",
     "test": "npm run test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "dev:api": "npm run dev -w @secscan/api",

@@ -18,6 +18,8 @@ export interface ScanRecord {
   grantId: string;
   status: 'queued' | 'running' | 'done' | 'failed';
   findings: Finding[];
+  /** Below the confirmation bar: for human review, never in a client report. */
+  review?: Finding[];
   notTested: string[];
   telemetry?: Record<string, number | null>;
   createdAt: string;

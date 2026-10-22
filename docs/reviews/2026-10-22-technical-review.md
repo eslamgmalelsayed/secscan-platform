@@ -44,6 +44,8 @@
 
 ### 2.2 الـ API لا يستطيع تشغيل فحص مصادَق
 
+> **الحالة: تم الإصلاح (2026-10-22)** — `engine/identities.ts` يحمّل ملف حسابات الاختبار (`"role/tenant": {cookies|headers|bearer, liveness?}`) إلى `SecretStore`؛ الـ API يقرأه من `SECSCAN_IDENTITIES_FILE` ويربط على 127.0.0.1 افتراضيًا.
+
 **الموقع:** `packages/api/src/http/main.ts` → `createHttpSender()` بدون `store`، ولا يوجد أي endpoint أو env var يملأ `SecretStore`.
 
 كل `identity.sessionRef` يُحلّ إلى مادة فارغة → كل الهويات فعليًا anonymous → baseline المالك يرجع 401 → `looksAuthorized=false` → **صفر نتائج بصمت**. الاختبارات تمر لأنها تحقن `Sender` وهمي يقرأ `sessionRef` مباشرة.
@@ -70,11 +72,15 @@
 
 ### 2.5 الفحوصات النشطة تعمل كمجهول فقط
 
+> **الحالة: تم الإصلاح (2026-10-22)** — `identityFor()` في `checks/context.ts`؛ فحوص CORS/open-redirect/reflection/SQLi تُرسَل بهوية الـ flow.
+
 **الموقع:** `packages/checks/src/context.ts` → `safeSend(ctx, req, identity = ANON)` وكل الفحوصات تستخدم الافتراضي.
 
 CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint خلف تسجيل دخول يرجع 401 → لا كشف. وCORS بالذات قيمته الحقيقية في الردود **المصادَقة**. يجب إرسال كل probe بهوية `capturedAsRole` الخاصة بالـ flow.
 
 ### 2.6 فجوات صامتة في التغطية (لا تظهر في `notTested`)
+
+> **الحالة: تم الإصلاح (2026-10-22)** — flow بلا tenant يطابق أول هوية بنفس الدور؛ flow بلا هوية مطابقة يظهر في `notTested`؛ `ScanService` يفحص حياة كل جلسة لها `liveness` ويُسقط الميتة مع ذكرها.
 
 - flow بـ `capturedAsTenant: null` (وهو **افتراضي مستورد HAR**) مقابل هويات لها tenant → `sameRole` يفشل → المالك يصبح anonymous → **صفر نتائج وصفر تحذيرات**. تحققت: `findings 0 | errors 0 | notTested 0`.
 - `SessionRegistry.verifyAll` (§7) موجود ولا يُستدعى من `ScanService`؛ جلسة ميتة = تغطية صفر بصمت.
@@ -84,7 +90,7 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 
 | الملف | الخطأ | الأثر |
 |---|---|---|
-| `engine/src/scanner.ts:60` | `String(e).startsWith('deny_')` — لكن `String(Error)` = `"ScopeRefused: deny_…"` فالشرط لا يصدق أبدًا | كل رفض نطاق يتكرر في `errors[]` (تحققت: `errors=1, notTested=1`) |
+| `engine/src/scanner.ts:60` | `String(e).startsWith('deny_')` — لكن `String(Error)` = `"ScopeRefused: deny_…"` فالشرط لا يصدق أبدًا | كل رفض نطاق يتكرر في `errors[]` (تحققت: `errors=1, notTested=1`) — **أُصلح** |
 | `engine/src/classifier.ts` | مطابقة substring على **URL كامل** بما فيه الـ query | `/presets` و`?remove_filter=0` → `state_changing` → تُرفض GETs آمنة؛ بينما `GET /approve?id=1` تمر كـ safe |
 | `checks/src/active.ts` | العلامة `sxz…` حروف وأرقام فقط | لا يمكن التمييز بين منعكس **مُرمَّز** وغير مُرمَّز؛ العنوان «بدون ترميز» غير دقيق. استخدم علامة تحوي `<>"'` وافحص بقاءها خامًا |
 | `checks/src/active.ts` | SQLi بسياق نصي فقط (`'…'`)، ويعيد إرسال baseline لكل param | لا كشف للسياق الرقمي؛ طلبات زائدة |
@@ -95,6 +101,8 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 ## 3. تشغيل محلي — ما وجدته فعليًا
 
 ### 3.1 البناء
+
+> **الحالة: تم الإصلاح (2026-10-22)** — سكربت البناء الجذري بالترتيب الصحيح.
 `npm run build` (root) **يفشل** على checkout نظيف: الترتيب أبجدي → `engine`/`report` تُبنى قبل `shared`. الحل الفوري في `package.json`:
 
 ```json
@@ -128,7 +136,7 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
    ```
    يولّد grant + ownership + sign + approve داخليًا تحت علم `--dev-trust` (يطبع تحذيرًا صريحًا)، يملأ `SecretStore` من الملف، يستدعي `verifyAll`، ثم `ScanService.run`، ثم يكتب التقرير بالعربية والإنجليزية. ده يحوّل الدورة من «ساعة إعداد» إلى «أمر واحد».
 3. **أصلح 2.5 و2.6** حتى تظهر النتائج خلف تسجيل الدخول وتظهر الفجوات بدل الصمت.
-4. **حد معدّل بسيط + مهلة إجمالية** (§8): `--rps 5` افتراضيًا، وزر إيقاف = Ctrl+C يكتب ما اكتُشف حتى الآن.
+4. **حد معدّل بسيط + مهلة إجمالية** (§8): **تم** — `engine/pacing.ts` (`pacedSender`: rps + deadline + AbortSignal)، والماسح يوقف نظيفًا ويذكر ذلك في `notTested`.
 5. **معمل محلي بثغرات مقصودة** (مثلًا OWASP Juice Shop أو crAPI في Docker) كـ benchmark ثابت لقياس precision/recall — مطلوب أصلًا في §12.
 6. بعدها فقط: Prisma adapter (حتى تُعاد الفحوصات وتُقارن عبر الزمن)، ثم BullMQ، ثم الواجهة.
 

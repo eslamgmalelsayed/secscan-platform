@@ -17,9 +17,22 @@ export interface CheckContext {
   flows: RecordedRequest[];
   /** JWTs supplied for analysis (from owner test-account material). */
   tokens?: string[];
+  /** Owner-supplied test identities. Flow-based probes run as the identity
+   *  that captured the flow (review 2.5), so endpoints behind login are
+   *  actually exercised; root scorecard checks stay anonymous. */
+  identities?: Identity[];
 }
 
 export const ANON: Identity = { role: 'anonymous', sessionRef: null };
+
+/** The identity that captured `flow`: exact role+tenant, else first of that role, else anonymous. */
+export function identityFor(ctx: CheckContext, flow: RecordedRequest): Identity {
+  const ids = ctx.identities ?? [];
+  if (!flow.capturedAsRole) return ANON;
+  return ids.find((i) => i.role === flow.capturedAsRole && (i.tenant ?? null) === (flow.capturedAsTenant ?? null))
+    ?? (flow.capturedAsTenant == null ? ids.find((i) => i.role === flow.capturedAsRole) : undefined)
+    ?? ANON;
+}
 
 export async function safeSend(
   ctx: CheckContext, req: RecordedRequest, identity: Identity = ANON,

@@ -7,6 +7,8 @@ export * from './scope';
 export * from './client';
 export * from './authzDiff';
 export * from './secretStore';
+export * from './identities';
+export * from './pacing';
 export * from './httpSender';
 export * from './session';
 export * from './telemetry';

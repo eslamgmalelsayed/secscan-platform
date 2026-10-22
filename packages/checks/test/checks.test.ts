@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 import {
-  AuthorizationGrant, GuardedClient, ScopeGuard, createHttpSender, type RecordedRequest,
+  AuthorizationGrant, GuardedClient, ScopeGuard, createHttpSender, loadIdentities, type RecordedRequest,
 } from '@secscan/engine';
 import { runChecks, analyzeJwt, type CheckContext } from '../src';
 
@@ -18,6 +18,11 @@ function server(): Promise<{ srv: Server; base: string }> {
       res.setHeader('Set-Cookie', 'sid=abc'); // no flags
       res.writeHead(200, { 'content-type': 'text/html' });
       return res.end('<html>key AKIAABCDEFGHIJKLMNOP home</html>'); // no sec headers; secret
+    }
+    if (p === '/private/search') { // only reachable with the test account's cookie
+      if (!(req.headers.cookie ?? '').includes('sid=alice')) { res.writeHead(401); return res.end(); }
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<html>private results for ${u.searchParams.get('q') ?? ''}</html>`);
     }
     if (p === '/search') {
       res.writeHead(200, { 'content-type': 'text/html' });
@@ -69,14 +74,16 @@ function noneJwt(): string {
 
 async function ctxFor(base: string): Promise<CheckContext> {
   const guard = new ScopeGuard([grant()], { blockPrivateAddresses: false });
-  const client = new GuardedClient(guard, createHttpSender());
+  const { store, identities } = loadIdentities({ 'customer/t1': { cookies: { sid: 'alice' } } });
+  const client = new GuardedClient(guard, createHttpSender({ store }));
   const flows: RecordedRequest[] = [
+    { method: 'GET', url: `${base}/private/search?q=hello`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
     { method: 'GET', url: `${base}/search?q=hello` },
     { method: 'GET', url: `${base}/item?id=1` },
     { method: 'GET', url: `${base}/go?next=/dash` },
     { method: 'GET', url: `${base}/api` },
   ];
-  return { client, grantFingerprint: 'fp', rootUrl: `${base}/`, flows, tokens: [noneJwt(), weakJwt()] };
+  return { client, grantFingerprint: 'fp', rootUrl: `${base}/`, flows, tokens: [noneJwt(), weakJwt()], identities };
 }
 
 describe('checks suite (live local server)', () => {
@@ -92,6 +99,8 @@ describe('checks suite (live local server)', () => {
       expect(r.reportReady.some((f) => f.title.en.includes('Boolean-based SQL injection'))).toBe(true);
       // reflected XSS is needs_review, never auto-reported
       expect(r.needsReview.some((f) => f.title.en.includes('reflected unescaped'))).toBe(true);
+      // the probe behind login ran as the captured identity (review 2.5)
+      expect(r.needsReview.some((f) => f.location === 'GET /private/search')).toBe(true);
       expect(r.reportReady.some((f) => f.title.en.includes('reflected unescaped'))).toBe(false);
       // every finding carries a CVSS score and multi-framework controls
       for (const f of [...r.reportReady, ...r.needsReview]) {

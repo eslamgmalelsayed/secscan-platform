@@ -60,3 +60,36 @@ describe('runAccessControlScan', () => {
     expect(s.bySeverity.critical).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe('runAccessControlScan — coverage gaps are reported, not silent (review 2.6)', () => {
+  const client = () => new GuardedClient(new ScopeGuard([grant()], { resolveHost: PUBLIC }), app);
+
+  it('a HAR-style flow with no tenant falls back to the first identity of that role and still finds the IDOR', async () => {
+    const r = await runAccessControlScan({
+      client: client(), grantFingerprint: 'fp',
+      flows: [{ method: 'GET', url: `https://${HOST}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: null }],
+      identities: [alice, bob],
+    });
+    expect(r.reportReady.some((f) => f.id.includes('bola_idor'))).toBe(true);
+  });
+
+  it('a flow whose role has no identity is listed in notTested', async () => {
+    const r = await runAccessControlScan({
+      client: client(), grantFingerprint: 'fp',
+      flows: [{ method: 'GET', url: `https://${HOST}/orders/42`, capturedAsRole: 'manager', capturedAsTenant: 't1' }],
+      identities: [alice, bob],
+    });
+    expect(r.reportReady).toHaveLength(0);
+    expect(r.notTested.some((n) => n.includes("no identity supplied for role 'manager/t1'"))).toBe(true);
+  });
+
+  it('scope refusals go to notTested only, not errors', async () => {
+    const r = await runAccessControlScan({
+      client: client(), grantFingerprint: 'fp',
+      flows: [{ method: 'GET', url: 'https://other.example.org/x', capturedAsRole: 'customer', capturedAsTenant: 't1' }],
+      identities: [alice, bob],
+    });
+    expect(r.errors).toHaveLength(0);
+    expect(r.notTested.some((n) => n.startsWith('deny_no_grant'))).toBe(true);
+  });
+});
