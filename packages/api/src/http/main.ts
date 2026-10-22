@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { SecretStore, createHttpSender, loadIdentities } from '@secscan/engine';
+import { RedisStopSignal, scanQueueProducer } from '@secscan/workers';
 import { ConsoleMailer, LabPolicy, SmtpMailer, type Mailer } from '../core';
 import { createPrismaStores } from '../persistence/prismaStores';
 import { buildApp } from './app';
@@ -48,6 +49,14 @@ async function main() {
   if (db) await db.db.$queryRawUnsafe('SELECT 1'); // fail fast on a bad URL
   else warn('DATABASE_URL not set; state is in memory and is lost on restart');
 
+  // With Redis, scans are queued for a separate worker process and the stop
+  // flag is shared across processes; without it, scans run inline in the API.
+  const redisUrl = process.env.SECSCAN_REDIS_URL;
+  const scanQueue = redisUrl ? scanQueueProducer(redisUrl) : undefined;
+  const stopSignal = redisUrl ? new RedisStopSignal(redisUrl) : undefined;
+  if (redisUrl && !db) warn('SECSCAN_REDIS_URL set without DATABASE_URL; the worker cannot share in-memory state — set DATABASE_URL too');
+  else if (!redisUrl) warn('SECSCAN_REDIS_URL not set; scans run inline in the API process (no worker)');
+
   const app = await buildApp({
     lab: new LabPolicy(legalResolved, labHosts, { allowPrivateTargets: process.env.SECSCAN_ALLOW_PRIVATE_TARGETS === 'true' }),
     sender: createHttpSender({ store }),
@@ -58,6 +67,8 @@ async function main() {
     auth,
     mailer,
     stores: db?.stores,
+    scanQueue,
+    stopSignal,
   });
   const port = Number(process.env.PORT ?? 3001);
   const bind = process.env.SECSCAN_BIND ?? '127.0.0.1';

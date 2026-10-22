@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, type Finding, type ScanRecord, type ScanSummary } from '../api';
 import { attempt } from '../toast';
 
@@ -11,13 +11,29 @@ const scan = ref<ScanRecord | null>(null);
 const open = ref<Set<string>>(new Set());
 const reportLang = ref<'ar' | 'en'>('ar');
 const report = ref<string>('');
+let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function loadList() { const s = await attempt(() => api.scans.list()); if (s) scans.value = s; }
+
 async function loadScan(id: string) {
   report.value = '';
+  clearTimeout(pollTimer);
   const s = await attempt(() => api.scans.get(id));
   scan.value = s;
+  // A queued/running scan (worker mode) is polled until it finishes.
+  if (s && (s.status === 'queued' || s.status === 'running')) {
+    pollTimer = setTimeout(() => { if (props.scanId === id) loadScan(id); }, 1500);
+  } else {
+    loadList();
+  }
 }
+
+async function stop() {
+  if (!scan.value) return;
+  if (await attempt(() => api.scans.stop(scan.value!.id), 'stop requested')) loadScan(scan.value.id);
+}
+
+onUnmounted(() => clearTimeout(pollTimer));
 async function loadReport() {
   if (!props.scanId) return;
   const r = await attempt(() => api.scans.report(props.scanId!, reportLang.value));
@@ -58,8 +74,12 @@ const sev = (f: Finding) => f.severity;
       <div>
         <div v-if="!scan" class="card empty">Select a scan on the left.</div>
         <template v-else>
+          <div v-if="scan.status === 'queued' || scan.status === 'running'" class="card" style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between">
+            <span><span class="chip warn">{{ scan.status }}</span> <span class="hint">polling for completion…</span></span>
+            <button class="btn sm danger" @click="stop">Stop scan</button>
+          </div>
           <div class="grid cols-4" style="margin-bottom: 16px">
-            <div class="card stat"><span class="l">Status</span><span class="n"><span class="chip" :class="scan.status === 'done' ? 'ok' : 'bad'">{{ scan.status }}</span></span></div>
+            <div class="card stat"><span class="l">Status</span><span class="n"><span class="chip" :class="scan.status === 'done' ? 'ok' : scan.status === 'failed' ? 'bad' : 'warn'">{{ scan.status }}</span></span></div>
             <div class="card stat"><span class="l">Confirmed</span><span class="n">{{ scan.findings.length }}</span></div>
             <div class="card stat"><span class="l">Needs review</span><span class="n">{{ scan.review?.length ?? 0 }}</span></div>
             <div class="card stat"><span class="l">Not tested</span><span class="n">{{ scan.notTested.length }}</span></div>

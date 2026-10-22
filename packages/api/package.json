@@ -9,6 +9,7 @@
     "test": "npm run generate && vitest run",
     "smoke": "node dist/scripts/smoke.js",
     "start": "node dist/http/main.js",
+    "start:worker": "node dist/worker/main.js",
     "generate": "prisma generate --config ../../prisma.config.ts"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "@secscan/importers": "*",
     "@secscan/report": "*",
     "@secscan/shared": "*",
+    "@secscan/workers": "*",
     "nodemailer": "^10.2.1",
     "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",

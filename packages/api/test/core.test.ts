@@ -3,7 +3,7 @@ import type { Identity, RecordedRequest, RecordedResponse, Sender } from '@secsc
 import type { Engagement } from '@secscan/shared';
 import {
   AppendOnlyAuditLog, AuthorizationService, AuthorizationError, LabPolicy, LabPolicyError,
-  ReportService, ScanService,
+  ReportService, RetestService, ScanService, ScanPreconditionError,
   InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo, MemoryMailer,
 } from '../src/core';
 
@@ -35,6 +35,12 @@ const vulnOrders: Sender = async (req: RecordedRequest, ident: Identity) => {
 const alice: Identity = { role: 'customer', tenant: 't1', sessionRef: 'sess-alice' };
 const bob: Identity = { role: 'customer', tenant: 't1', sessionRef: 'sess-bob' };
 const flow: RecordedRequest = { method: 'GET', url: `https://${LAB_HOST}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: 't1' };
+const engagementE1 = (): Engagement => ({
+  id: 'E1', client: 'Lab', preparedBy: 'SecScan', assets: [LAB_HOST], environment: 'lab',
+  authorizationRef: 'g1', window: { start: grantInput().notBefore, end: grantInput().notAfter },
+  methodology: { ar: 'اختبار صلاحيات', en: 'Authorization testing' },
+  limitations: { ar: 'المعمل فقط', en: 'Lab only' },
+} as Engagement);
 
 let grants: InMemoryGrantRepo, engs: InMemoryEngagementRepo, scans: InMemoryScanRepo, audit: AppendOnlyAuditLog, auth: AuthorizationService;
 beforeEach(() => {
@@ -99,7 +105,7 @@ describe('LabPolicy gate (§3.2)', () => {
   it('rejects a target outside the lab allow-list', async () => {
     await activateGrant('evil.example.com');
     const svc = new ScanService({
-      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit,
+      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, engagements: engs, audit,
       sender: vulnOrders, fingerprintSecret: 's', resolveHost: () => ['10.0.0.5'],
     });
     await expect(svc.run({ engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin' }))
@@ -159,8 +165,9 @@ describe('session liveness (§7)', () => {
       if (new URL(req.url).pathname === '/me') return ident.sessionRef === 'sess-alice' ? json(200, '{"me":1}') : json(401, '{}');
       return vulnOrders(req, ident);
     };
+    await engs.save(engagementE1());
     const svc = new ScanService({
-      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit, sender, fingerprintSecret: 's',
+      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, engagements: engs, audit, sender, fingerprintSecret: 's',
       liveness: { 'sess-alice': `https://${LAB_HOST}/me`, 'sess-bob': `https://${LAB_HOST}/me` },
       pacing: { requestsPerSecond: 1000 },
     });
@@ -175,8 +182,9 @@ describe('session liveness (§7)', () => {
 describe('scope-gated scan + report', () => {
   it('runs on a lab target and confirms a BOLA finding', async () => {
     await activateGrant(LAB_HOST);
+    await engs.save(engagementE1());
     const svc = new ScanService({
-      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit,
+      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, engagements: engs, audit,
       sender: vulnOrders, fingerprintSecret: 's', resolveHost: () => ['10.0.0.5'],
     });
     const scan = await svc.run({ engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin' });
@@ -185,15 +193,72 @@ describe('scope-gated scan + report', () => {
     expect(scan.findings[0].id).toContain('bola_idor');
     expect((await audit.list('g1')).some((e) => e.action === 'scan_run')).toBe(true);
 
-    const engagement: Engagement = {
-      id: 'E1', client: 'Lab', preparedBy: 'SecScan', assets: [LAB_HOST], environment: 'lab',
-      authorizationRef: 'g1', window: { start: grantInput().notBefore, end: grantInput().notAfter },
-      methodology: { ar: 'اختبار صلاحيات', en: 'Authorization testing' },
-      limitations: { ar: 'المعمل فقط', en: 'Lab only' },
-    } as Engagement;
-    await engs.save(engagement);
     const report = await new ReportService(engs, scans).render('E1', scan.id, 'ar');
     expect(report).toContain('تقرير تقييم أمني');
     expect(report).toContain('ما الذي لم يُفحص'); // coverage-limits section always present
+  });
+});
+
+function labSvc(sender: Sender) {
+  return new ScanService({
+    auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, engagements: engs, audit,
+    sender, fingerprintSecret: 's', resolveHost: () => ['10.0.0.5'], pacing: { requestsPerSecond: 1000 },
+  });
+}
+
+describe('scan preconditions (gap 5)', () => {
+  it('refuses a scan whose engagement does not exist, up front', async () => {
+    await activateGrant(LAB_HOST); // note: no engagement saved
+    await expect(labSvc(vulnOrders).run({ engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin' }))
+      .rejects.toThrow(ScanPreconditionError);
+  });
+});
+
+describe('operator stop (gap 3)', () => {
+  it('halts on an aborted signal and records a partial, stopped result', async () => {
+    await activateGrant(LAB_HOST); await engs.save(engagementE1());
+    const ac = new AbortController(); ac.abort();
+    const scan = await labSvc(vulnOrders).run({
+      engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin',
+      signal: ac.signal, skipChecks: true,
+    });
+    expect(scan.status).toBe('done');
+    expect(scan.telemetry?.stopped).toBe(1);
+    expect(scan.notTested.some((n) => n.includes('stopped'))).toBe(true);
+  });
+});
+
+describe('retests (gap 4) + evidence bundle (gap 7)', () => {
+  it('re-tests a finding after a fix and writes its retest history; bundle carries evidence', async () => {
+    await activateGrant(LAB_HOST); await engs.save(engagementE1());
+    let fixed = false;
+    const sender: Sender = async (req, ident) => {
+      if (new URL(req.url).pathname.startsWith('/orders/')) {
+        if (!ident.sessionRef) return json(403, '{"e":"login"}');
+        if (fixed && ident.sessionRef !== 'sess-alice') return json(403, '{"e":"forbidden"}'); // now enforced
+        return json(200, '{"order":42,"buyer":"alice"}');
+      }
+      return json(404, '{}');
+    };
+    const svc = labSvc(sender);
+    const req = { engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin' };
+    const scan = await svc.run(req);
+    const finding = scan.findings.find((f) => f.id.includes('bola_idor'))!;
+    expect(finding).toBeDefined();
+
+    // evidence bundle carries the finding and its evidence
+    const bundle = await new ReportService(engs, scans).bundle('E1', scan.id);
+    expect(bundle.engagement.id).toBe('E1');
+    expect(bundle.findings.some((f) => f.id === finding.id)).toBe(true);
+    expect(bundle.findings[0].evidence.length).toBeGreaterThan(0);
+
+    fixed = true;
+    const res = await new RetestService(scans, svc).retest(scan.id, finding.id, req);
+    expect(res.result).toBe('fixed');
+    const updated = await scans.get(scan.id);
+    const back = updated!.findings.find((f) => f.id === finding.id)!;
+    expect(back.retests?.length).toBe(1);
+    expect(back.retests?.[0].result).toBe('fixed');
+    expect(back.status).toBe('fixed');
   });
 });

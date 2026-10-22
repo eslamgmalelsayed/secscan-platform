@@ -190,11 +190,35 @@ export class ScansController {
   @Post()
   async run(@Req() req: any, @Body() body: any) {
     const input = ScanBody.parse(body);
-    const scan = await this.core.scan.run({ ...input, actor: actorOf(req, body) });
+    // enqueue() runs inline when no queue is configured, or returns a 'queued'
+    // record for a worker to pick up; either way preconditions are checked now.
+    const scan = await this.core.scan.enqueue({ ...input, actor: actorOf(req, body) });
     return {
       id: scan.id, status: scan.status, confirmed: scan.findings.length,
       review: scan.review?.length ?? 0, notTested: scan.notTested.length, telemetry: scan.telemetry,
     };
+  }
+
+  /** Halt a running (or queued) scan. The running execute() polls and aborts. */
+  @Post(':id/stop')
+  async stop(@Req() req: any, @Param('id') id: string, @Body() body: any) {
+    await this.core.scan.requestStop(id, actorOf(req, body));
+    return { id, stopping: true };
+  }
+
+  /** Re-test one finding after a claimed fix; re-supply the scan inputs. */
+  @Post(':id/findings/:findingId/retest')
+  async retest(@Req() req: any, @Param('id') id: string, @Param('findingId') findingId: string, @Body() body: any) {
+    const input = ScanBody.parse(body);
+    return this.core.retest.retest(id, findingId, { ...input, actor: actorOf(req, body) });
+  }
+
+  /** Machine-readable evidence pack (JSON) next to the Markdown report. */
+  @Get(':id/evidence')
+  async evidence(@Param('id') id: string) {
+    const s = await this.core.scans.get(id);
+    if (!s) throw new NotFoundError(`scan ${id} not found`);
+    return this.core.report.bundle(s.engagementId, id);
   }
 
   @Get()

@@ -69,7 +69,9 @@ export const api = {
     list: () => call<ScanSummary[]>('GET', '/scans'),
     get: (id: string) => call<ScanRecord>('GET', `/scans/${id}`),
     run: (body: unknown) => call<ScanSummary>('POST', '/scans', { ...(body as object), actor: settings.actor }),
+    stop: (id: string) => call<{ id: string; stopping: boolean }>('POST', `/scans/${id}/stop`, { actor: settings.actor }),
     report: (id: string, lang: 'ar' | 'en') => call<{ markdown: string }>('GET', `/scans/${id}/report?lang=${lang}`),
+    evidence: (id: string) => call<unknown>('GET', `/scans/${id}/evidence`),
   },
 };
 

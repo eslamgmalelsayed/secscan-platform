@@ -38,3 +38,30 @@ npm run test  --workspaces         # 42 vitest
 npm run build -w @secscan/api && npm run smoke -w @secscan/api   # 7 HTTP checks
 # API: SECSCAN_LEGAL_RESOLVED=false SECSCAN_LAB_HOSTS=lab.internal npm run start -w @secscan/api
 ```
+
+## تحديث 2026-10-22 (مساءً) — ردّ على المراجعة
+
+- **فحص على الطابور (gap 1):** `POST /scans` يتحقق من الشروط فورًا (التفويض، قفل المعمل، ووجود الـ engagement) ثم — لو `SECSCAN_REDIS_URL` مضبوط — يُرجع `queued` ويضع المهمة على BullMQ؛ عملية العامل `npm run start:worker -w @secscan/api` تشغّلها وتنقل الحالة queued → running → done. العامل يحمّل ملف الهويات بنفسه، فالأسرار لا تمر عبر Redis (المهمة تحمل مفاتيح الهويات فقط). بدون Redis، الفحص يعمل داخل الـ API كما كان.
+- **إيقاف (gap 3):** `POST /scans/:id/stop` يرفع علامة إيقاف مشتركة (Redis عبر العمليات، أو في الذاكرة)؛ الفحص الجاري يستطلعها ويُجهض الـ paced sender وتُحفظ نتائج جزئية مع ملاحظة.
+- **وجود الـ engagement (gap 5):** يُرفض الفحص فورًا لو الـ engagement غير موجود، بدل الفشل لاحقًا عند التقرير.
+- **إعادة الاختبار (gap 4):** `POST /scans/:id/findings/:findingId/retest` يعيد تشغيل الفحص ويكتب النتيجة (fixed/still_open) في تاريخ `retests` للثغرة.
+- **حزمة الأدلة (gap 7):** `GET /scans/:id/evidence` تُرجع JSON كامل (الـ engagement، النتائج بأدلتها، ما لم يُفحص) بجانب تقرير Markdown.
+- **الواجهة:** صفحة النتائج تستطلع الفحص المُطابور حتى يكتمل وفيها زر إيقاف؛ العميل يرسل Bearer ومساري توقيع المالك.
+- **CI/lint (gap 6):** `.github/workflows/ci.yml` يبني ويفحص الأنواع ويشغّل الاختبارات مقابل حاويتي Postgres و Redis والـ smoke على كل push؛ `npm run lint` = فحص أنواع لكل الحزم (`scripts/typecheck.mjs`).
+
+**لم يُتحقق منه في حاوية التطوير** (محجوب: Postgres/Redis/الشبكة الخارجية): مسار BullMQ/Redis الفعلي، تخزين Postgres الحي، وتشغيل فعلي على موقع تملكه. المنطق مُختبَر عبر الطابور في الذاكرة ووحدات الاختبار؛ التحقق الحقيقي يتم على جهازك أو في CI.
+
+### تشغيل وضع الطابور محليًا
+```
+npm run services:up && npm run db:migrate
+# terminal 1 (API):
+DATABASE_URL=… SECSCAN_REDIS_URL=redis://127.0.0.1:6379 SECSCAN_LAB_HOSTS=… \
+SECSCAN_IDENTITIES_FILE=identities.json SECSCAN_FINGERPRINT_SECRET=… npm run start -w @secscan/api
+# terminal 2 (worker): نفس المتغيرات
+… npm run start:worker -w @secscan/api
+```
+
+### أول تشغيل على موقع تملكه (gap/next 4)
+1. `SECSCAN_LEGAL_RESOLVED=true` و`SECSCAN_LAB_HOSTS` يحوي نطاقك (أو اتركه مقفولًا على المعمل).
+2. أنشئ grant لنطاقك، وأثبت الملكية (DNS TXT / well-known / meta)، ووقّع المالك بالرمز على بريد في نطاق الهدف، ثم اعتمد.
+3. حمّل حسابات الاختبار في `SECSCAN_IDENTITIES_FILE`، استورد الـ flows، وشغّل الفحص. هذا هو الاختبار الوحيد للاتصال المثبّت (undici) ومعالجة الهويات مقابل خادم حقيقي.

@@ -1,22 +1,33 @@
 /**
- * Runs a scope-gated access-control scan (Design §3, §8, §9).
- * Enforces, in order: grant is scan-allowed (AuthorizationService), every
- * target is permitted by LabPolicy (§3.2), then every outbound request is
- * additionally gated by the engine's ScopeGuard inside GuardedClient.
+ * Scope-gated scans (Design §3, §8, §9) with an optional queue (review gap 1).
  *
- * Also (§7, §8): every outbound request is paced (rate limit + deadline +
- * abort), and each identity with a liveness URL is verified before the scan;
- * a dead session is dropped and reported, never allowed to produce a result.
+ * Preconditions are checked up front (grant scan-allowed, every target lab-
+ * allowed, and the engagement exists — review gap 5), so a bad request fails
+ * immediately instead of at report time.
+ *
+ * enqueue(): if a scanQueue is configured, a 'queued' record is saved, a job
+ * (carrying NO secrets — identities travel as keys only) is pushed, and the
+ * request returns right away. A worker process then calls execute(), which
+ * moves the record queued -> running -> done. With no queue (dev/CLI/tests)
+ * enqueue() runs the scan inline and returns the finished record.
+ *
+ * Every outbound request is paced (rate limit + deadline) and abortable; the
+ * stop signal (review gap 3) is polled so an operator can halt a running scan.
  */
 import {
-  GuardedClient, ScopeGuard, fingerprint as grantFingerprint, pacedSender, runAccessControlScan,
+  GuardedClient, ScanStopped, ScopeGuard, fingerprint as grantFingerprint, pacedSender, runAccessControlScan,
   type HostResolver, type Identity, type PacingOptions, type RecordedRequest, type Sender,
 } from '@secscan/engine';
 import { runChecks } from '@secscan/checks';
 import type { AuditStore } from './audit';
 import { AuthorizationService } from './authorizationService';
 import { LabPolicy } from './labPolicy';
-import type { ScanRecord, ScanRepo } from './repositories';
+import type { EngagementRepo, ScanRecord, ScanRepo } from './repositories';
+import { InMemoryStopSignal, pollStop, type StopSignal } from './stopSignal';
+
+export class ScanPreconditionError extends Error {
+  constructor(msg: string) { super(msg); this.name = 'ScanPreconditionError'; }
+}
 
 export interface ScanRequest {
   engagementId: string;
@@ -24,115 +35,184 @@ export interface ScanRequest {
   flows: RecordedRequest[];
   identities: Identity[];
   actor: string;
-  /** Root URL for passive/scorecard checks; defaults to the grant's first target. */
   rootUrl?: string;
-  /** Optional JWTs (from test-account material) for passive JWT analysis. */
   tokens?: string[];
-  /** Skip the non-authz check suite (passive/config/active/jwt). */
   skipChecks?: boolean;
-  /** Kill switch (Ctrl+C / admin stop). */
   signal?: AbortSignal;
+}
+
+/** Job placed on the queue. Carries identity KEYS only — never secrets, which
+ *  the worker resolves from its own SecretStore (review gap 1). */
+export interface QueuedScan {
+  scanId: string;
+  engagementId: string;
+  grantId: string;
+  flows: RecordedRequest[];
+  identities: Identity[];
+  rootUrl?: string;
+  skipChecks?: boolean;
+  actor: string;
+}
+
+export interface ScanQueue {
+  add(job: QueuedScan): Promise<void>;
 }
 
 export interface ScanServiceDeps {
   auth: AuthorizationService;
   lab: LabPolicy;
   scans: ScanRepo;
+  engagements: EngagementRepo;
   audit: AuditStore;
   sender: Sender;
   fingerprintSecret: string;
   resolveHost?: HostResolver;
-  /** Rate limit / deadline for every outbound request. */
   pacing?: Pick<PacingOptions, 'requestsPerSecond' | 'maxDurationMs'>;
-  /** sessionRef -> URL that returns 2xx only while that session is valid. */
   liveness?: Record<string, string>;
+  /** When set, enqueue() queues the scan for a worker; otherwise it runs inline. */
+  scanQueue?: ScanQueue;
+  /** Shared stop flag; defaults to in-memory (single-process). */
+  stopSignal?: StopSignal;
 }
 
+const newId = () => `scan-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+
 export class ScanService {
-  constructor(private d: ScanServiceDeps) {}
+  private stop: StopSignal;
+  constructor(private d: ScanServiceDeps) {
+    this.stop = d.stopSignal ?? new InMemoryStopSignal();
+  }
 
-  async run(req: ScanRequest): Promise<ScanRecord> {
+  /** Validate everything that should reject the request synchronously. */
+  private async preflight(req: { engagementId: string; grantId: string; flows: RecordedRequest[] }) {
     const rec = await this.d.auth.assertScanAllowed(req.grantId);
-
-    // §3.2 hard gate: every grant target AND every flow host must be allowed.
     for (const t of rec.grant.targets) this.d.lab.assertTargetAllowed(t.host);
     for (const f of req.flows) this.d.lab.assertTargetAllowed(new URL(f.url).hostname);
+    if (!(await this.d.engagements.get(req.engagementId))) {
+      throw new ScanPreconditionError(`engagement ${req.engagementId} not found`);
+    }
+    return rec;
+  }
 
-    const id = `scan-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  /** Enqueue for a worker, or run inline when no queue is configured. */
+  async enqueue(req: ScanRequest): Promise<ScanRecord> {
+    await this.preflight(req);
+    const id = newId();
+    if (!this.d.scanQueue) return this.execute(id, req);
+    const queued: ScanRecord = {
+      id, engagementId: req.engagementId, grantId: req.grantId, status: 'queued',
+      findings: [], review: [], notTested: [], createdAt: new Date().toISOString(),
+    };
+    await this.d.scans.save(queued);
+    await this.d.scanQueue.add({
+      scanId: id, engagementId: req.engagementId, grantId: req.grantId, flows: req.flows,
+      identities: req.identities, rootUrl: req.rootUrl, skipChecks: req.skipChecks, actor: req.actor,
+    });
+    await this.d.audit.append({ actor: req.actor, action: 'scan_queued', grantId: req.grantId, detail: id });
+    return queued;
+  }
+
+  /** Inline convenience (CLI, tests): run to completion and return the record. */
+  async run(req: ScanRequest): Promise<ScanRecord> {
+    return this.execute(newId(), req);
+  }
+
+  /** Run one scan to completion, updating the record through running -> done. */
+  async execute(scanId: string, req: ScanRequest): Promise<ScanRecord> {
+    const rec = await this.preflight(req); // re-checked at run time (grant may have been revoked)
+    const createdAt = (await this.d.scans.get(scanId))?.createdAt ?? new Date().toISOString();
+    await this.d.scans.save({
+      id: scanId, engagementId: req.engagementId, grantId: req.grantId, status: 'running',
+      findings: [], review: [], notTested: [], createdAt,
+    });
+
     const fp = grantFingerprint(rec.grant, this.d.fingerprintSecret);
     const guard = new ScopeGuard([rec.grant], {
-      blockPrivateAddresses: this.d.lab.blockPrivateAddresses,
-      resolveHost: this.d.resolveHost,
+      blockPrivateAddresses: this.d.lab.blockPrivateAddresses, resolveHost: this.d.resolveHost,
     });
-    const sender = pacedSender(this.d.sender, { ...this.d.pacing, signal: req.signal });
+    const controller = new AbortController();
+    if (req.signal?.aborted) controller.abort();
+    else req.signal?.addEventListener('abort', () => controller.abort(), { once: true });
+    const stopPoll = pollStop(this.stop, scanId, controller);
+    const sender = pacedSender(this.d.sender, { ...this.d.pacing, signal: controller.signal });
     const client = new GuardedClient(guard, sender);
+    let stopped = false;
 
-    // §7: verify sessions that have a liveness probe; drop and report dead ones.
-    const skipped: string[] = [];
-    const identities: Identity[] = [];
-    for (const ident of req.identities) {
-      const url = ident.sessionRef ? this.d.liveness?.[ident.sessionRef] : undefined;
-      if (!url) { identities.push(ident); continue; }
-      let ok = false;
-      try {
-        const r = await client.send({ method: 'GET', url }, ident);
-        ok = r.status >= 200 && r.status < 300 && r.body.length > 0;
-      } catch { ok = false; }
-      if (ok) identities.push(ident);
-      else skipped.push(`skipped: session '${ident.sessionRef}' failed its liveness probe (${url}); identity dropped`);
-    }
-
-    let result;
     try {
-      result = await runAccessControlScan({
-        client, grantFingerprint: fp, flows: req.flows, identities,
+      // §7: verify sessions that have a liveness probe; drop and report dead ones.
+      const skipped: string[] = [];
+      const identities: Identity[] = [];
+      for (const ident of req.identities) {
+        const url = ident.sessionRef ? this.d.liveness?.[ident.sessionRef] : undefined;
+        if (!url) { identities.push(ident); continue; }
+        let ok = false;
+        try { const r = await client.send({ method: 'GET', url }, ident); ok = r.status >= 200 && r.status < 300 && r.body.length > 0; } catch { ok = false; }
+        if (ok) identities.push(ident);
+        else skipped.push(`skipped: session '${ident.sessionRef}' failed its liveness probe (${url}); identity dropped`);
+      }
+
+      let result;
+      try {
+        result = await runAccessControlScan({ client, grantFingerprint: fp, flows: req.flows, identities });
+      } catch (e) {
+        if (e instanceof ScanStopped) { stopped = true; result = { reportReady: [], needsReview: [], notTested: [`stopped: ${e.reason} during access-control run`] }; }
+        else throw e;
+      }
+      // runAccessControlScan catches ScanStopped internally and reports it as a
+      // "stopped:" note rather than rethrowing — treat that as a stop too.
+      if (result.notTested.some((n) => n.startsWith('stopped:'))) stopped = true;
+
+      let checksReady = 0, checksReview = 0, checksNotes: string[] = [];
+      const findings = [...result.reportReady];
+      const review = [...result.needsReview];
+      if (!req.skipChecks && !stopped) {
+        const first = rec.grant.targets[0];
+        const rootUrl = req.rootUrl ?? `${first.scheme}://${first.host}/`;
+        const checks = await runChecks({ client, grantFingerprint: fp, rootUrl, flows: req.flows, tokens: req.tokens, identities });
+        findings.push(...checks.reportReady);
+        review.push(...checks.needsReview);
+        checksReady = checks.reportReady.length;
+        checksReview = checks.needsReview.length;
+        checksNotes = checks.notTested.filter((n) => n.startsWith('stopped:') || n.startsWith('error:'));
+        if (checksNotes.some((n) => n.startsWith('stopped:'))) stopped = true;
+      }
+
+      const notTested = [...new Set([...skipped, ...result.notTested, ...checksNotes, ...client.refused.map((r) => `${r.decision}: ${r.reason}`)])];
+      if (stopped) notTested.push('stopped by operator: results are partial');
+      const scan: ScanRecord = {
+        id: scanId, engagementId: req.engagementId, grantId: req.grantId, status: 'done',
+        findings, review, notTested,
+        telemetry: {
+          confirmedFindings: findings.length, needsReview: result.needsReview.length + checksReview,
+          authzConfirmed: result.reportReady.length, checksConfirmed: checksReady,
+          requests: sender.stats.requests, durationMs: Date.now() - sender.stats.startedAt,
+          stopped: stopped ? 1 : 0,
+        },
+        createdAt,
+      };
+      await this.d.scans.save(scan);
+      await this.d.audit.append({
+        actor: req.actor, action: stopped ? 'scan_stopped' : 'scan_run', grantId: req.grantId,
+        detail: `confirmed=${findings.length} (authz=${result.reportReady.length} checks=${checksReady}) review=${result.needsReview.length + checksReview} notTested=${notTested.length}`,
       });
+      return scan;
     } catch (e) {
       const failed: ScanRecord = {
-        id, engagementId: req.engagementId, grantId: req.grantId, status: 'failed',
-        findings: [], notTested: client.refused.map((r) => `${r.decision}: ${r.reason}`),
-        createdAt: new Date().toISOString(),
+        id: scanId, engagementId: req.engagementId, grantId: req.grantId, status: 'failed',
+        findings: [], review: [], notTested: client.refused.map((r) => `${r.decision}: ${r.reason}`), createdAt,
       };
       await this.d.scans.save(failed);
-      await this.d.audit.append({ actor: req.actor, action: 'scan_failed', grantId: req.grantId, detail: String(e) });
+      await this.d.audit.append({ actor: req.actor, action: 'scan_failed', grantId: req.grantId, detail: String(e).slice(0, 300) });
       return failed;
+    } finally {
+      stopPoll();
+      await this.stop.clear(scanId);
     }
+  }
 
-    // Non-destructive check suite (passive scorecard + safe config + active
-    // detection + JWT), through the SAME guarded client, so scope still holds.
-    let checksReady = 0, checksReview = 0, checksNotes: string[] = [];
-    const findings = [...result.reportReady];
-    const review = [...result.needsReview];
-    if (!req.skipChecks) {
-      const first = rec.grant.targets[0];
-      const rootUrl = req.rootUrl ?? `${first.scheme}://${first.host}/`;
-      const checks = await runChecks({ client, grantFingerprint: fp, rootUrl, flows: req.flows, tokens: req.tokens, identities });
-      findings.push(...checks.reportReady);
-      review.push(...checks.needsReview);
-      checksReady = checks.reportReady.length;
-      checksReview = checks.needsReview.length;
-      checksNotes = checks.notTested.filter((n) => n.startsWith('stopped:') || n.startsWith('error:'));
-    }
-
-    const notTested = [...new Set([...skipped, ...result.notTested, ...checksNotes, ...client.refused.map((r) => `${r.decision}: ${r.reason}`)])];
-    const scan: ScanRecord = {
-      id, engagementId: req.engagementId, grantId: req.grantId, status: 'done',
-      findings, review, notTested,
-      telemetry: {
-        confirmedFindings: findings.length,
-        needsReview: result.needsReview.length + checksReview,
-        authzConfirmed: result.reportReady.length,
-        checksConfirmed: checksReady,
-        requests: sender.stats.requests,
-        durationMs: Date.now() - sender.stats.startedAt,
-      },
-      createdAt: new Date().toISOString(),
-    };
-    await this.d.scans.save(scan);
-    await this.d.audit.append({
-      actor: req.actor, action: 'scan_run', grantId: req.grantId,
-      detail: `confirmed=${findings.length} (authz=${result.reportReady.length} checks=${checksReady}) review=${result.needsReview.length + checksReview} notTested=${notTested.length}`,
-    });
-    return scan;
+  /** Operator stop: flag the scan; the running execute() polls and aborts. */
+  async requestStop(scanId: string, actor: string): Promise<void> {
+    await this.stop.request(scanId);
+    await this.d.audit.append({ actor, action: 'scan_stop_requested', detail: scanId });
   }
 }

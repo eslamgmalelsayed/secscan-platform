@@ -4,5 +4,7 @@ export * from './labPolicy';
 export * from './authorizationService';
 export * from './scanService';
 export * from './reportService';
+export * from './retestService';
+export * from './stopSignal';
 export * from './ownerSignature';
 export * from './smtpMailer';

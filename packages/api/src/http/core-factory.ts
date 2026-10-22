@@ -1,9 +1,10 @@
 /** Builds the core service graph used by both the HTTP app and the smoke test. */
 import type { HostResolver, Identity, OwnershipDeps, PacingOptions, Sender } from '@secscan/engine';
 import {
-  AppendOnlyAuditLog, AuthorizationService, LabPolicy, ReportService, ScanService,
-  InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo, InMemoryOwnerChallengeStore,
+  AppendOnlyAuditLog, AuthorizationService, LabPolicy, ReportService, RetestService, ScanService,
+  InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo, InMemoryOwnerChallengeStore, InMemoryStopSignal,
   type AuditStore, type EngagementRepo, type GrantRepo, type Mailer, type OwnerChallengeStore, type ScanRepo,
+  type ScanQueue, type StopSignal,
 } from '../core';
 import type { ApiAuth } from './auth';
 
@@ -35,6 +36,10 @@ export interface CoreOptions {
   /** Test identities loaded at boot (keys only are ever exposed over HTTP). */
   identities?: Identity[];
   stores?: CoreStores;
+  /** When set, POST /scans queues for a worker; otherwise scans run inline. */
+  scanQueue?: ScanQueue;
+  /** Cross-process stop flag (defaults to in-memory for single-process runs). */
+  stopSignal?: StopSignal;
 }
 
 export interface CoreGraph {
@@ -51,6 +56,8 @@ export interface CoreGraph {
   apiAuth?: ApiAuth;
   ownerEmailEnabled: boolean;
   identities: Identity[];
+  retest: RetestService;
+  queued: boolean;
 }
 
 export function buildCore(opts: CoreOptions): CoreGraph {
@@ -65,17 +72,19 @@ export function buildCore(opts: CoreOptions): CoreGraph {
     s.grants, s.audit,
     opts.mailer ? { mailer: opts.mailer, challenges: s.challenges, secret: opts.fingerprintSecret } : undefined,
   );
+  const stopSignal: StopSignal = opts.stopSignal ?? new InMemoryStopSignal();
   const scan = new ScanService({
-    auth, lab: opts.lab, scans: s.scans, audit: s.audit,
+    auth, lab: opts.lab, scans: s.scans, engagements: s.engagements, audit: s.audit,
     sender: opts.sender, fingerprintSecret: opts.fingerprintSecret, resolveHost: opts.resolveHost,
-    pacing: opts.pacing, liveness: opts.liveness,
+    pacing: opts.pacing, liveness: opts.liveness, scanQueue: opts.scanQueue, stopSignal,
   });
   const report = new ReportService(s.engagements, s.scans);
+  const retest = new RetestService(s.scans, scan);
   return {
     audit: s.audit, grants: s.grants, engagements: s.engagements, scans: s.scans,
-    auth, scan, report, lab: opts.lab, ownership: opts.ownership,
+    auth, scan, report, retest, lab: opts.lab, ownership: opts.ownership,
     adminToken: opts.adminToken, apiAuth: opts.auth, ownerEmailEnabled: !!opts.mailer,
-    identities: opts.identities ?? [],
+    identities: opts.identities ?? [], queued: !!opts.scanQueue,
   };
 }
 

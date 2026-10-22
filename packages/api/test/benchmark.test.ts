@@ -13,8 +13,9 @@ import type { AddressInfo } from 'node:net';
 import { createHttpSender, loadIdentities, type RecordedRequest } from '@secscan/engine';
 import {
   AppendOnlyAuditLog, AuthorizationService, LabPolicy, ScanService,
-  InMemoryGrantRepo, InMemoryScanRepo,
+  InMemoryGrantRepo, InMemoryScanRepo, InMemoryEngagementRepo,
 } from '../src/core';
+import type { Engagement } from '@secscan/shared';
 
 const NOW = new Date();
 let srv: Server; let base: string; let host: string;
@@ -87,6 +88,7 @@ const EXPECTED = [
 describe('benchmark fixture: exact precision and recall', () => {
   it('reports every known weakness and nothing on the clean surface', async () => {
     const grants = new InMemoryGrantRepo(); const scans = new InMemoryScanRepo(); const audit = new AppendOnlyAuditLog();
+    const engs = new InMemoryEngagementRepo();
     const auth = new AuthorizationService(grants, audit);
     await auth.createGrant({
       grantId: 'bench', targets: [{ host, scheme: 'http', port: Number(base.split(':')[2]) }], ownershipProof: 'http_token', ownershipToken: 't',
@@ -102,8 +104,13 @@ describe('benchmark fixture: exact precision and recall', () => {
       'customer2/t1': { cookies: { sid: 'bob' }, liveness: `${base}/api/me` },
       'customer/t2': { cookies: { sid: 'carol' }, liveness: `${base}/api/me` },
     });
+    await engs.save({
+      id: 'E', client: host, preparedBy: 'bench', assets: [host], environment: 'lab', authorizationRef: 'bench',
+      window: { start: new Date(NOW.getTime() - 3.6e6).toISOString(), end: new Date(NOW.getTime() + 3.6e6).toISOString() },
+      methodology: { ar: 'x', en: 'x' }, limitations: { ar: 'y', en: 'y' },
+    } as Engagement);
     const svc = new ScanService({
-      auth, lab: new LabPolicy(false, [host], { allowPrivateTargets: true }), scans, audit,
+      auth, lab: new LabPolicy(false, [host], { allowPrivateTargets: true }), scans, engagements: engs, audit,
       sender: createHttpSender({ store }), fingerprintSecret: 's', liveness, pacing: { requestsPerSecond: 500 },
     });
     const flows: RecordedRequest[] = [
