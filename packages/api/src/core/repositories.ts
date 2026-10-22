@@ -33,6 +33,7 @@ export interface GrantRepo {
 export interface EngagementRepo {
   save(e: Engagement): void;
   get(id: string): Engagement | undefined;
+  list(): Engagement[];
 }
 export interface ScanRepo {
   save(s: ScanRecord): void;
@@ -50,6 +51,7 @@ export class InMemoryEngagementRepo implements EngagementRepo {
   private m = new Map<string, Engagement>();
   save(e: Engagement) { this.m.set(e.id, e); }
   get(id: string) { return this.m.get(id); }
+  list() { return [...this.m.values()]; }
 }
 export class InMemoryScanRepo implements ScanRepo {
   private m = new Map<string, ScanRecord>();

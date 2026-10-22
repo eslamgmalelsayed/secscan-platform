@@ -1,5 +1,5 @@
 /** Builds the core service graph used by both the HTTP app and the smoke test. */
-import type { HostResolver, OwnershipDeps, PacingOptions, Sender } from '@secscan/engine';
+import type { HostResolver, Identity, OwnershipDeps, PacingOptions, Sender } from '@secscan/engine';
 import {
   AppendOnlyAuditLog, AuthorizationService, LabPolicy, ReportService, ScanService,
   InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo,
@@ -17,6 +17,8 @@ export interface CoreOptions {
   /** Required in the x-admin-token header for approve / revoke / manual ownership.
    *  Unset = open (local dev only); the API logs a warning at boot. */
   adminToken?: string;
+  /** Test identities loaded at boot (keys only are ever exposed over HTTP). */
+  identities?: Identity[];
 }
 
 export interface CoreGraph {
@@ -30,6 +32,7 @@ export interface CoreGraph {
   lab: LabPolicy;
   ownership?: OwnershipDeps;
   adminToken?: string;
+  identities: Identity[];
 }
 
 export function buildCore(opts: CoreOptions): CoreGraph {
@@ -44,7 +47,7 @@ export function buildCore(opts: CoreOptions): CoreGraph {
     pacing: opts.pacing, liveness: opts.liveness,
   });
   const report = new ReportService(engagements, scans);
-  return { audit, grants, engagements, scans, auth, scan, report, lab: opts.lab, ownership: opts.ownership, adminToken: opts.adminToken };
+  return { audit, grants, engagements, scans, auth, scan, report, lab: opts.lab, ownership: opts.ownership, adminToken: opts.adminToken, identities: opts.identities ?? [] };
 }
 
 export const CORE = 'SECSCAN_CORE';

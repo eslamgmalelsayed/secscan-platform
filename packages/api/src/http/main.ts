@@ -36,6 +36,7 @@ async function main() {
     sender: createHttpSender({ store }),
     fingerprintSecret,
     liveness: loaded?.liveness,
+    identities: loaded?.identities,
     adminToken,
   });
   const port = Number(process.env.PORT ?? 3001);
