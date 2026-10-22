@@ -16,7 +16,7 @@
 | `@secscan/api`       | دورة حياة التفويض، سجل append-only، بوابة المعمل (§3.2)، فحص مُبوَّب = authz + checks، تقارير — + طبقة NestJS/Fastify | §3/§6/§8/§9            | 5 vitest + 7 HTTP smoke |
 | `@secscan/workers`   | منطق Discovery/Scan/Validator على واجهة Queue                                                                         | §4                     | 3                       |
 
-**الإجمالي:** 50 اختبار vitest + 7 HTTP smoke.
+**الإجمالي (محدّث 2026-10-22):** 110 اختبار vitest ناجح + 2 متخطّى، و23 فحص HTTP smoke. (أعداد الحزم الفردية في الجدول أعلاه تقريبية وسبقت إضافات الطابور/الإيقاف/إعادة الاختبار وإصلاح الإيجابية الكاذبة.)
 
 ## مبدأ الاختبار: قوي وغير مدمّر
 
@@ -34,7 +34,7 @@
 ```bash
 npm install
 npm run build --workspaces
-npm run test  --workspaces         # 42 vitest
+npm run test  --workspaces         # 110 vitest (+2 skipped)
 npm run build -w @secscan/api && npm run smoke -w @secscan/api   # 7 HTTP checks
 # API: SECSCAN_LEGAL_RESOLVED=false SECSCAN_LAB_HOSTS=lab.internal npm run start -w @secscan/api
 ```
@@ -50,6 +50,11 @@ npm run build -w @secscan/api && npm run smoke -w @secscan/api   # 7 HTTP checks
 - **CI/lint (gap 6):** `.github/workflows/ci.yml` يبني ويفحص الأنواع ويشغّل الاختبارات مقابل حاويتي Postgres و Redis والـ smoke على كل push؛ `npm run lint` = فحص أنواع لكل الحزم (`scripts/typecheck.mjs`).
 
 **لم يُتحقق منه في حاوية التطوير** (محجوب: Postgres/Redis/الشبكة الخارجية): مسار BullMQ/Redis الفعلي، تخزين Postgres الحي، وتشغيل فعلي على موقع تملكه. المنطق مُختبَر عبر الطابور في الذاكرة ووحدات الاختبار؛ التحقق الحقيقي يتم على جهازك أو في CI.
+
+## تحديث 2026-10-22 (مساءً، 2) — علم مالك الكائن وإزالة كود ميت
+
+- **إيجابية كاذبة: مورد مشترك مسمّى بمعرّف كائن.** صفحة يراها كل مستخدم مسجَّل (مثل `/api/products/42`) تسمّي كائنًا لكنها ليست مملوكة لمستخدم بعينه؛ المقارنة بين الردود لا تميّزها عن كائن خاص، والمالك وحده يعرف. أُضيف علم `ownsObject` على `RecordedRequest` (نظير `requiresAuth`): في `authzDiff.ts` لا يُؤكَّد finding على مستوى الكائن (`bola_idor`/`cross_tenant`) إلا إذا سمّى الطلب كائنًا **و** وسم المالك الـ flow بـ `ownsObject`؛ وإلا يذهب لطابور المراجعة كـ `likely` مع سبب صريح في الأدلة. الاستيراد (HAR/OpenAPI) لا يضع الوسم بالتصميم، فلا يؤكّد IDOR تلقائيًا أبدًا — يوسمه إنسان أولًا. الواجهة تتيح وسم كل flow (عمود «Owns object?» في إعداد الفحص)، والـ API يقبل العلم في مخطط الـ flow. اختبارات جديدة في `authzDiff.test.ts` و`benchmark.test.ts` تثبّت الحالتين.
+- **إزالة كود ميت.** `SessionRegistry` (`engine/src/session.ts`) لم يعد يُستدعى من أي مسار بعد انتقال فحص حياة الجلسات إلى `ScanService` (عبر `liveness` من `loadIdentities`)؛ حُذف الملف واختباره والتصدير.
 
 ### تشغيل وضع الطابور محليًا
 ```

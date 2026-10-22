@@ -114,9 +114,13 @@ async function run() {
           <button class="btn" @click="importFlows">Import flows</button>
           <span class="chip" :class="flows.length ? 'ok' : ''">{{ flows.length }} flow(s) ready</span>
         </div>
+        <p class="sub" style="margin-top: 12px">
+          Tick <b>Owns object?</b> for a flow that returns an object belonging to the capturing identity (e.g. <code>/api/orders/42</code> is their own order).
+          A match on a labelled flow is auto-confirmed; an unlabelled one — a page every logged-in user may see, like a product — goes to human review instead of the report.
+        </p>
         <table v-if="flows.length" style="margin-top: 12px">
-          <thead><tr><th>Method</th><th>URL</th><th>Role</th><th>Auth?</th></tr></thead>
-          <tbody><tr v-for="(f, i) in flows.slice(0, 20)" :key="i"><td>{{ f.method }}</td><td class="mono">{{ f.url }}</td><td>{{ f.capturedAsRole ?? '—' }}</td><td>{{ f.requiresAuth ? 'yes' : '' }}</td></tr></tbody>
+          <thead><tr><th>Method</th><th>URL</th><th>Role</th><th>Auth?</th><th>Owns object?</th></tr></thead>
+          <tbody><tr v-for="(f, i) in flows.slice(0, 20)" :key="i"><td>{{ f.method }}</td><td class="mono">{{ f.url }}</td><td>{{ f.capturedAsRole ?? '—' }}</td><td>{{ f.requiresAuth ? 'yes' : '' }}</td><td><input type="checkbox" v-model="f.ownsObject" /></td></tr></tbody>
         </table>
       </div>
 

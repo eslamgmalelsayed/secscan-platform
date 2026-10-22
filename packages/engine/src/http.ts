@@ -17,6 +17,18 @@ export interface RecordedRequest {
    * public page from a should-be-private one, so the owner labels it. (§6/§9.)
    */
   requiresAuth?: boolean;
+  /**
+   * Owner's assertion that the object this request names BELONGS TO the
+   * capturing identity — so another identity receiving the same body is a real
+   * authorization break, not a legitimately shared resource. The oracle for
+   * object-level findings: response comparison cannot tell a per-user object
+   * (`/api/orders/42`) from one every authenticated user may rightly see
+   * (`/api/products/42`); only the owner knows. Without this label an
+   * object-access match is reported as `likely` for human review, never
+   * auto-confirmed. Imported flows (HAR/OpenAPI) carry no label by design, so
+   * import never auto-confirms an IDOR — a human labels it first. (§6/§9.)
+   */
+  ownsObject?: boolean;
 }
 
 export interface RecordedResponse {

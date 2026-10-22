@@ -34,7 +34,7 @@ const vulnOrders: Sender = async (req: RecordedRequest, ident: Identity) => {
 };
 const alice: Identity = { role: 'customer', tenant: 't1', sessionRef: 'sess-alice' };
 const bob: Identity = { role: 'customer', tenant: 't1', sessionRef: 'sess-bob' };
-const flow: RecordedRequest = { method: 'GET', url: `https://${LAB_HOST}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: 't1' };
+const flow: RecordedRequest = { method: 'GET', url: `https://${LAB_HOST}/orders/42`, ownsObject: true, capturedAsRole: 'customer', capturedAsTenant: 't1' };
 const engagementE1 = (): Engagement => ({
   id: 'E1', client: 'Lab', preparedBy: 'SecScan', assets: [LAB_HOST], environment: 'lab',
   authorizationRef: 'g1', window: { start: grantInput().notBefore, end: grantInput().notAfter },

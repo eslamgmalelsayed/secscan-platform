@@ -45,7 +45,8 @@ function differ(sender: Sender) {
 const OWNER: Identity = { role: 'customer', tenant: 't1', sessionRef: 'sess-alice' };
 const BOB: Identity = { role: 'customer', tenant: 't1', sessionRef: 'sess-bob' };
 const ANON: Identity = { role: 'anonymous', sessionRef: null };
-const ORDER: RecordedRequest = { method: 'GET', url: `https://${HOST}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: 't1' };
+// The owner captured their OWN order #42 and labelled it owner-of-object.
+const ORDER: RecordedRequest = { method: 'GET', url: `https://${HOST}/orders/42`, ownsObject: true, capturedAsRole: 'customer', capturedAsTenant: 't1' };
 
 describe('AuthorizationDiffer', () => {
   it('finds a confirmed IDOR in a vulnerable app', async () => {
@@ -121,10 +122,38 @@ describe('AuthorizationDiffer — false-positive guards (review 2.1)', () => {
   });
 
   it('still reports IDOR when the identifier is a query parameter and volatile fields differ', async () => {
-    const byId: RecordedRequest = { method: 'GET', url: `https://${HOST}/orders?id=42`, capturedAsRole: 'customer', capturedAsTenant: 't1' };
+    const byId: RecordedRequest = { method: 'GET', url: `https://${HOST}/orders?id=42`, ownsObject: true, capturedAsRole: 'customer', capturedAsTenant: 't1' };
     const f = await differ(profileApp(true)).testObjectAccess(byId, OWNER, BOB);
     expect(f).not.toBeNull();
     expect(f!.id).toContain('bola_idor');
+  });
+});
+
+describe('AuthorizationDiffer — a shared resource named by an object id (product-page FP)', () => {
+  // /api/products/42 NAMES an object but is a catalog item every logged-in user
+  // may see. Response comparison cannot tell it from a private object, so
+  // without an owner-of-object label it must NOT be auto-confirmed.
+  const catalog: Sender = async (req, ident) => {
+    if (!ident.sessionRef) return json(401, '{"e":"login"}');
+    if (new URL(req.url).pathname === '/api/products/42') return json(200, '{"product":42,"name":"Widget","price":9}');
+    return json(404, '{}');
+  };
+  const PRODUCT = (ownsObject?: boolean): RecordedRequest =>
+    ({ method: 'GET', url: `https://${HOST}/api/products/42`, ownsObject, capturedAsRole: 'customer', capturedAsTenant: 't1' });
+
+  it('does not confirm it; routes it to review as `likely` with a reason', async () => {
+    const f = await differ(catalog).testObjectAccess(PRODUCT(), OWNER, BOB);
+    expect(f).not.toBeNull();
+    expect(f!.id).toContain('bola_idor');
+    expect(f!.confidence).toBe('likely'); // review queue, NOT the report
+    const note = f!.evidence.find((e) => e.label === 'review');
+    expect(note).toBeDefined();
+    expect(note!.content).toContain('owner-of-object');
+  });
+
+  it('confirms the same request once the owner labels it owner-of-object', async () => {
+    const f = await differ(catalog).testObjectAccess(PRODUCT(true), OWNER, BOB);
+    expect(f!.confidence).toBe('confirmed');
   });
 });
 

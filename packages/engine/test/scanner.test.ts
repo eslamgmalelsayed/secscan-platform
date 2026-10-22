@@ -35,7 +35,7 @@ const bob: Identity = { role: 'customer', tenant: 't1', sessionRef: 'sess-bob' }
 
 // capturedAsRole must match an identity's role to pick the owner
 const flows: RecordedRequest[] = [
-  { method: 'GET', url: `https://${HOST}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
+  { method: 'GET', url: `https://${HOST}/orders/42`, ownsObject: true, capturedAsRole: 'customer', capturedAsTenant: 't1' },
   { method: 'GET', url: `https://${HOST}/public`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
   { method: 'GET', url: `https://${HOST}/account/ssn`, requiresAuth: true, capturedAsRole: 'customer', capturedAsTenant: 't1' },
 ];
@@ -67,7 +67,7 @@ describe('runAccessControlScan — coverage gaps are reported, not silent (revie
   it('a HAR-style flow with no tenant falls back to the first identity of that role and still finds the IDOR', async () => {
     const r = await runAccessControlScan({
       client: client(), grantFingerprint: 'fp',
-      flows: [{ method: 'GET', url: `https://${HOST}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: null }],
+      flows: [{ method: 'GET', url: `https://${HOST}/orders/42`, ownsObject: true, capturedAsRole: 'customer', capturedAsTenant: null }],
       identities: [alice, bob],
     });
     expect(r.reportReady.some((f) => f.id.includes('bola_idor'))).toBe(true);

@@ -13,6 +13,13 @@
  * Such a request is never a confirmed bola_idor/cross_tenant. Between two
  * identities of the SAME role it is dropped; across roles it is kept as a
  * `likely` function-level candidate for human review, never auto-reported.
+ *
+ * Guard against the shared-resource false positive: a request may NAME an
+ * object (`/api/products/42`) yet return a resource every authenticated user
+ * may legitimately see. Response comparison cannot tell that from a private
+ * object A owns — only the owner knows. So an object-access match is confirmed
+ * ONLY when the owner has labelled the flow `ownsObject`; otherwise it is kept
+ * as `likely` for human review, never auto-reported.
  */
 import { Finding, type Confidence, type Severity, controlsFor, cvss31, type Cvss31Metrics } from '@secscan/shared';
 import { GuardedClient } from './client';
@@ -88,6 +95,7 @@ export class AuthorizationDiffer {
     let type: AccessFindingType;
     let severity: Severity;
     let confidence: Confidence = 'confirmed';
+    let reviewReason: string | undefined;
     let last: RecordedResponse | null;
 
     if (isAnonymous(challenger)) {
@@ -108,14 +116,20 @@ export class AuthorizationDiffer {
       const crossTenant = !!challenger.tenant && !!owner.tenant && challenger.tenant !== owner.tenant;
       type = crossTenant ? 'cross_tenant' : 'bola_idor';
       severity = crossTenant ? 'critical' : 'high';
-      // Different role but no object named: could be function-level access
-      // (customer sees an admin page) or identically seeded accounts. A human decides.
-      if (!namesObject) confidence = 'likely';
+      // Confirmed ONLY when the owner has labelled this flow owner-of-object.
+      // Without the label we cannot distinguish a private object from a resource
+      // every authenticated user may see — the finding goes to human review.
+      if (!(namesObject && reqAsOwner.ownsObject)) {
+        confidence = 'likely';
+        reviewReason = !namesObject
+          ? 'request names no object identifier; equal body across roles may be function-level access or identically seeded test accounts'
+          : 'request names an object but the flow is not labelled owner-of-object; a resource every authenticated user may legitimately see (e.g. a shared or catalog item) is indistinguishable from a private object by response comparison alone — a human must confirm ownership';
+      }
       last = r.last;
     }
 
     return buildFinding({
-      type, severity, confidence, reqAsOwner, owner, challenger, baseline, exploit: last!,
+      type, severity, confidence, reviewReason, reqAsOwner, owner, challenger, baseline, exploit: last!,
       baseDigest, grantFingerprint: this.grantFingerprint,
     });
   }
@@ -143,8 +157,8 @@ const TEXT: Record<AccessFindingType, { titleAr: string; titleEn: string; impAr:
 };
 
 function buildFinding(a: {
-  type: AccessFindingType; severity: Severity; confidence: Confidence; reqAsOwner: RecordedRequest;
-  owner: Identity; challenger: Identity; baseline: RecordedResponse;
+  type: AccessFindingType; severity: Severity; confidence: Confidence; reviewReason?: string;
+  reqAsOwner: RecordedRequest; owner: Identity; challenger: Identity; baseline: RecordedResponse;
   exploit: RecordedResponse; baseDigest: string; grantFingerprint: string;
 }): Finding {
   const t = TEXT[a.type];
@@ -173,7 +187,7 @@ function buildFinding(a: {
       { kind: 'request', label: 'replayed as challenger', content: `${a.reqAsOwner.method} ${a.reqAsOwner.url} as ${who(a.challenger)} -> ${a.exploit.status}` },
       { kind: 'note', label: 'grant', content: `fingerprint ${a.grantFingerprint.slice(0, 16)}…` },
       ...(a.confidence !== 'confirmed'
-        ? [{ kind: 'note' as const, label: 'review', content: 'request names no object identifier; equal body across roles may be function-level access or identically seeded test accounts' }]
+        ? [{ kind: 'note' as const, label: 'review', content: a.reviewReason ?? 'equal body across identities needs human confirmation of ownership' }]
         : []),
     ],
     cvss: cvss31(CVSS_BY_TYPE[a.type]),

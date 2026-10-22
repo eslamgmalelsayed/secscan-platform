@@ -59,6 +59,9 @@ beforeAll(async () => {
       const o = orders.find((x) => x.id === Number(u.pathname.split('/')[3]));
       return o ? json(200, o) : json(404, {});
     }
+    // SHARED: a catalog item every logged-in user sees identically. NAMES an
+    // object but is not owned per-user -> must go to review, never confirmed.
+    if (u.pathname === '/api/products/42') return me ? json(200, { id: 42, name: 'Widget', price: 9 }) : json(401, { e: 'login' });
     // WEAK #3: labeled requiresAuth by the owner, but served to anyone -> missing_auth
     if (u.pathname === '/api/admin/export') return json(200, { rows: 3 });
     // WEAK #4: reflects Origin with credentials -> cors
@@ -117,7 +120,8 @@ describe('benchmark fixture: exact precision and recall', () => {
       { method: 'GET', url: `${base}/api/me`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
       { method: 'GET', url: `${base}/api/orders`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
       { method: 'GET', url: `${base}/api/invoices/7`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
-      { method: 'GET', url: `${base}/api/orders/101`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
+      { method: 'GET', url: `${base}/api/orders/101`, capturedAsRole: 'customer', capturedAsTenant: 't1', ownsObject: true },
+      { method: 'GET', url: `${base}/api/products/42`, capturedAsRole: 'customer', capturedAsTenant: 't1' }, // shared: no owner label
       { method: 'GET', url: `${base}/api/admin/export`, capturedAsRole: 'customer', capturedAsTenant: 't1', requiresAuth: true },
       { method: 'GET', url: `${base}/api/profile`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
       { method: 'GET', url: `${base}/login?next=/dash` },
@@ -133,5 +137,11 @@ describe('benchmark fixture: exact precision and recall', () => {
     for (const clean of ['/api/me', '/api/orders', '/api/invoices/7']) {
       expect(scan.findings.some((f) => f.location?.endsWith(clean)), clean).toBe(false);
     }
+    // the shared catalog item NAMES an object but is not owner-labelled: it must
+    // land in review as `likely`, never in the confirmed report (product-page FP).
+    expect(scan.findings.some((f) => f.location?.endsWith('/api/products/42'))).toBe(false);
+    const product = scan.review?.find((f) => f.location?.endsWith('/api/products/42'));
+    expect(product, 'shared product should surface for human review').toBeDefined();
+    expect(product!.confidence).toBe('likely');
   }, 30_000);
 });

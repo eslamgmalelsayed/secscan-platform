@@ -17,7 +17,7 @@ const vulnApp: Sender = async (req: RecordedRequest, ident: Identity) => {
 };
 
 const flows: RecordedRequest[] = [
-  { method: 'GET', url: `https://${HOST}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
+  { method: 'GET', url: `https://${HOST}/orders/42`, ownsObject: true, capturedAsRole: 'customer', capturedAsTenant: 't1' },
 ];
 const identitiesFile = {
   'customer/t1': { cookies: { sid: 'alice' } },

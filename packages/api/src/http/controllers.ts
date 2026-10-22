@@ -23,6 +23,7 @@ const FlowSchema = z.object({
   capturedAsRole: z.string().optional(),
   capturedAsTenant: z.string().nullable().optional(),
   requiresAuth: z.boolean().optional(),
+  ownsObject: z.boolean().optional(),
 });
 const IdentitySchema = z.object({
   role: z.string().min(1),

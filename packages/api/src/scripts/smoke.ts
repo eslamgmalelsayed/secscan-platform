@@ -28,7 +28,7 @@ const grant = {
   notAfter: new Date(NOW.getTime() + 3.6e6).toISOString(), status: 'pending_owner',
 };
 const ownerLink = { party: 'Lab Owner', email: 'owner@lab.sa', role: 'system_owner', signedAt: NOW.toISOString(), statement: 'I authorize' };
-const flows = [{ method: 'GET', url: `https://${LAB}/orders/42`, capturedAsRole: 'customer', capturedAsTenant: 't1' }];
+const flows = [{ method: 'GET', url: `https://${LAB}/orders/42`, ownsObject: true, capturedAsRole: 'customer', capturedAsTenant: 't1' }];
 const identities = [
   { role: 'customer', tenant: 't1', sessionRef: 'sess-alice' },
   { role: 'customer', tenant: 't1', sessionRef: 'sess-bob' },

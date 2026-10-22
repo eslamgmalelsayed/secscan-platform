@@ -23,7 +23,11 @@
 
 ### 2.1 إيجابية كاذبة «مؤكدة» في محرك الصلاحيات — أخطر ملاحظة
 
-> **الحالة: تم الإصلاح (2026-10-22)** — `normalize.ts` يحتفظ بالمعرّفات في JSON، و`identifier.ts` + `authzDiff.ts` يشترطان معرّف كائن قبل تصنيف bola_idor/cross_tenant؛ العبور بين الأدوار بلا معرّف يذهب لطابور المراجعة كـ `likely`. اختبارات: `normalize.test.ts` + 4 حالات جديدة في `authzDiff.test.ts`.
+> **الحالة: تم الإصلاح بالكامل (2026-10-22، مرحلتان).**
+> **المرحلة 1:** `normalize.ts` يحتفظ بالمعرّفات في JSON، و`identifier.ts` + `authzDiff.ts` يشترطان أن يسمّي الطلب كائنًا قبل تصنيف bola_idor/cross_tenant.
+> **المرحلة 2 (الحاسمة):** اشتراط تسمية كائن **غير كافٍ** — صفحة يراها كل مستخدم مسجَّل (مثل `/api/products/42`) تسمّي كائنًا لكنها مورد مشترك، وتظهر كـ IDOR مؤكد زائف. المقارنة بين الردود لا تستطيع التمييز بين كائن خاص بمستخدم ومورد مشترك؛ المالك وحده يعرف. لذا أُضيف **علم مالك الكائن** `ownsObject` على الـ flow (نظير `requiresAuth`): لا يُؤكَّد finding على مستوى الكائن إلا إذا وسم المالك الـ flow بأنه يملك الكائن؛ وبدون الوسم يذهب لطابور المراجعة كـ `likely` مع سبب صريح، لا للتقرير. الاستيراد (HAR/OpenAPI) لا يضع الوسم بالتصميم، فلا يؤكِّد IDOR تلقائيًا أبدًا.
+> **ملاحظة على الاقتراح #2 أدناه (self-baseline):** لم يُبنَ، وما كان ليمسك هذه الحالة أصلًا — المورد المشترك يعيد نفس الرد سواء طلبه المتحدّي بمعرّف «مورده» أو بمعرّف غيره، فالفرق المقترح يكون صفرًا في الحالتين. العلم هو الحل الصحيح.
+> **اختبارات:** `normalize.test.ts` + حالات جديدة في `authzDiff.test.ts` (مورد مشترك مسمّى → `likely`؛ ونفس الطلب موسومًا → `confirmed`) + تأكيد precision في `benchmark.test.ts` (`/api/products/42` المشترك يذهب للمراجعة لا للتقرير).
 
 **الموقع:** `packages/engine/src/normalize.ts` + `authzDiff.ts`
 
@@ -61,7 +65,7 @@
 - `ownerSign` يقبل أي كائن فيه `role: 'system_owner'` بلا OTP ولا إيميل ولا حتى `AuthorizationChainLink.parse`.
 - لا توجد مصادقة على الـ API أصلًا، و`app.listen(port, '0.0.0.0')` يربط على كل الواجهات.
 
-**للتشغيل المحلي** ده مقبول مؤقتًا بشرط: اربط على `127.0.0.1`، وسمِّ الوضع صراحة `SECSCAN_DEV_TRUST=true` بحيث يرفض الـ API الإقلاع بدونه حتى لا ينسى أحد إن البوابة مفتوحة. **قبل أي عميل:** تنفيذ تحقق الملكية الفعلي (DNS TXT سهل: `dns.resolveTxt`)، ومصادقة أدمن، وOTP للمالك.
+**تصحيح (2026-10-22):** اقتراح علم `SECSCAN_DEV_TRUST` على مستوى الـ API **لم يُنفَّذ وتجاوزته** مصادقة Bearer لكل المسارات + `x-admin-token` للتجاوزات اليدوية (أعلاه)؛ الـ API يربط على `127.0.0.1` افتراضيًا. مفهوم «dev-trust» بقي حيث يصحّ فقط: في الـ CLI المحلي (`packages/cli`) حيث يؤكّد المشغّل على جهازه أنه يملك الهدف، وحتى هناك يمشي على دورة التفويض كاملة محليًا. تحقق الملكية الفعلي (DNS TXT) ومصادقة الأدمن وOTP للمالك: **منفَّذة**.
 
 ### 2.4 حارس SSRF/DNS-rebinding غير مُفعَّل وغير قابل للتفعيل
 
@@ -87,8 +91,8 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 > **الحالة: تم الإصلاح (2026-10-22)** — flow بلا tenant يطابق أول هوية بنفس الدور؛ flow بلا هوية مطابقة يظهر في `notTested`؛ `ScanService` يفحص حياة كل جلسة لها `liveness` ويُسقط الميتة مع ذكرها.
 
 - flow بـ `capturedAsTenant: null` (وهو **افتراضي مستورد HAR**) مقابل هويات لها tenant → `sameRole` يفشل → المالك يصبح anonymous → **صفر نتائج وصفر تحذيرات**. تحققت: `findings 0 | errors 0 | notTested 0`.
-- `SessionRegistry.verifyAll` (§7) موجود ولا يُستدعى من `ScanService`؛ جلسة ميتة = تغطية صفر بصمت.
-- حل: أي flow بلا مالك مطابق، وأي جلسة فشل فحص حياتها، يُضاف سطر صريح في `notTested` + تحذير في `errors`.
+- فحص حياة الجلسات انتقل إلى `ScanService` نفسه (`liveness` من `loadIdentities`): كل جلسة لها probe تُفحص قبل الفحص، والميتة تُسقَط مع سطر في `notTested`. `SessionRegistry` القديم صار كودًا ميتًا (لم يُستدعَ من أي مسار) و**حُذف** (2026-10-22) هو واختباره.
+- أي flow بلا مالك مطابق، وأي جلسة فشل فحص حياتها، يُضاف سطر صريح في `notTested`.
 
 ### 2.7 أخطاء كود مؤكدة
 
@@ -97,10 +101,10 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 | `engine/src/scanner.ts:60` | `String(e).startsWith('deny_')` — لكن `String(Error)` = `"ScopeRefused: deny_…"` فالشرط لا يصدق أبدًا | كل رفض نطاق يتكرر في `errors[]` (تحققت: `errors=1, notTested=1`) — **أُصلح** |
 | `engine/src/classifier.ts` | مطابقة substring على **URL كامل** بما فيه الـ query — **أُصلح** (كلمات كاملة في المسار وقيم action) | `/presets` و`?remove_filter=0` → `state_changing` → تُرفض GETs آمنة؛ بينما `GET /approve?id=1` تمر كـ safe |
 | `checks/src/active.ts` | العلامة `sxz…` حروف وأرقام فقط — **أُصلح** (تُبلَّغ فقط حين تعود `<"'>` خامًا) | لا يمكن التمييز بين منعكس **مُرمَّز** وغير مُرمَّز؛ العنوان «بدون ترميز» غير دقيق. استخدم علامة تحوي `<>"'` وافحص بقاءها خامًا |
-| `checks/src/active.ts` | SQLi بسياق نصي فقط (`'…'`)، ويعيد إرسال baseline لكل param | لا كشف للسياق الرقمي؛ طلبات زائدة |
+| `checks/src/active.ts` | SQLi بسياق نصي فقط (`'…'`) — **أُصلح** (2026-10-22): `SQLI_CONTEXTS` تضيف حمولات رقمية تُجرَّب فقط حين تكون القيمة الأساسية رقمية (`/^\d+$/`) | صار يكشف سياق الحقن الرقمي أيضًا |
 | `api/src/http/controllers.ts` | `Engagement` و`flows` و`identities` و`link` تُحفَظ بلا `parse` — **أُصلح** | بيانات فاسدة تنفجر لاحقًا كـ 400 بمعنى غامض |
 | `api/src/http/errors.filter.ts` | كل `Error` غير معروف → 400 بنص الرسالة الخام — **أُصلح** (500 عام + log) | يخفي 500 حقيقية ويسرّب تفاصيل داخلية |
-| `prisma/schema.prisma` | `Finding.type` غير موجود في zod، و`cvss`/`retests` غير موجودة في Prisma — **أُصلح** (المخطط فقط؛ لا adapter بعد) | انحراف مخطط سيظهر عند أول adapter |
+| `prisma/schema.prisma` | `Finding.type` غير موجود في zod، و`cvss`/`retests` غير موجودة في Prisma — **أُصلح** | محوّل Prisma 7 + pg موجود الآن (`persistence/prismaStores.ts`، القسم 6) مع اختبار عقد مشترك؛ لا انحراف مخطط |
 
 ## 3. تشغيل محلي — ما وجدته فعليًا
 
@@ -116,9 +120,8 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 (أو TypeScript project references مع `tsc -b`.)
 
 ### 3.2 ما نجح بعد البناء بالترتيب
-- 50 اختبار vitest: **كلها تمر**.
-- 7 فحوصات smoke HTTP: **كلها تمر**.
-- Node 24.17 / npm 11 / Docker 29 متوفرون؛ `docker-compose.yml` سليم لكن **لا شيء يستخدمه** بعد (لا Prisma adapter ولا BullMQ adapter).
+> **تحديث العدّ (2026-10-22):** 110 اختبار vitest ناجح + 2 متخطّى، و23 فحص HTTP smoke — كلها تمر. (الرقم كبر مع الطابور/الإيقاف/إعادة الاختبار/حزمة الأدلة وإصلاح الإيجابية الكاذبة؛ وصغر قليلًا بحذف اختبار `SessionRegistry` الميت.)
+- Node 24.17 / npm 11 / Docker 29 متوفرون؛ `docker-compose.yml` يُستخدم الآن عبر محوّلات Prisma + BullMQ (القسم 6).
 
 ### 3.3 التبعيات
 
@@ -126,27 +129,22 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 `npm audit`: 10 ثغرات (3 critical) في `@nestjs/platform-fastify@10` / `fastify` / `@fastify/middie` / `vitest@3`. بما أن المواصفة تعتبر المنصة نفسها «هدفًا عالي القيمة» (§3.6)، الترقية لـ NestJS 12 / vitest 5 مطلوبة قبل أي تعريض للشبكة. محليًا غير حرجة.
 
 ### 3.4 ملاحظة على الـ working tree
-ملفّا المواصفات في `docs/specs/` **محذوفان في working tree** (غير مُلتزَم). إن كان عن قصد فلا بأس، وإلا `git checkout -- docs/specs`.
+> **تم (2026-10-22):** ملفّا المواصفات في `docs/specs/` مُعادان ومُلتزَمان (`platform-design.md` + `implementation-notes.md`)؛ لم تعد محذوفة.
 
 ## 4. المسار الأقصر لهدفك: «أختبر مواقعي محليًا»
 
 اليوم، لتفحص موقعًا واحدًا عبر الـ API تحتاج 7 طلبات HTTP يدوية **ومع ذلك لن تحصل على فحص مصادَق** (2.2). المقترح، بالترتيب:
 
 1. **أصلح 2.1 أولًا** (الإيجابية الكاذبة) — لا معنى لتقرير لا تثق فيه.
-2. **CLI محلي** في `packages/cli` يلتف حول `buildCore` مباشرة بلا HTTP:
-   ```bash
-   secscan scan --host mysite.com --root https://mysite.com \
-     --har customer.har --role customer --tenant t1 \
-     --identities identities.json   # {"customer/t1":{"cookies":{"sid":"…"}}, …}
-     --out report.ar.md
-   ```
-   يولّد grant + ownership + sign + approve داخليًا تحت علم `--dev-trust` (يطبع تحذيرًا صريحًا)، يملأ `SecretStore` من الملف، يستدعي `verifyAll`، ثم `ScanService.run`، ثم يكتب التقرير بالعربية والإنجليزية. ده يحوّل الدورة من «ساعة إعداد» إلى «أمر واحد».
+2. **CLI محلي** في `packages/cli` — **تم (2026-10-22)**: `runScan` يلتف حول `buildCore` مباشرة بلا HTTP، يولّد grant + ownership + sign + approve داخليًا (dev-trust محلي)، يملأ `SecretStore` من ملف الهويات، ويترك فحص حياة الجلسات لـ `ScanService` (لا `verifyAll` بعد الآن)، ثم يكتب التقرير بالعربية والإنجليزية. ده يحوّل الدورة من «ساعة إعداد» إلى «أمر واحد».
 3. **أصلح 2.5 و2.6** حتى تظهر النتائج خلف تسجيل الدخول وتظهر الفجوات بدل الصمت.
 4. **حد معدّل بسيط + مهلة إجمالية** (§8): **تم** — `engine/pacing.ts` (`pacedSender`: rps + deadline + AbortSignal)، والماسح يوقف نظيفًا ويذكر ذلك في `notTested`.
-5. **معمل محلي بثغرات مقصودة** — **تم كـ benchmark داخلي**: `api/test/benchmark.test.ts` (5 ضعف معروف + 3 نقاط سليمة، دقة واسترجاع 100% مطلوبة). (مثلًا OWASP Juice Shop أو crAPI في Docker) كـ benchmark ثابت لقياس precision/recall — مطلوب أصلًا في §12.
+5. **معمل محلي بثغرات مقصودة** — **تم كـ benchmark داخلي**: `api/test/benchmark.test.ts` يشغّل خادمًا داخليًا بأضعاف معروفة + نقاط سليمة + مورد مشترك مسمّى، ويشترط precision/recall 100% (كل ضعف متوقَّع حاضر ولا شيء زائد مؤكَّد). الخطوة التالية الاختيارية: ربط هدف خارجي معروف (OWASP Juice Shop أو crAPI في Docker) كـ benchmark ثابت إضافي — مطلوب في §12.
 6. بعدها فقط: Prisma adapter (حتى تُعاد الفحوصات وتُقارن عبر الزمن)، ثم BullMQ، ثم الواجهة.
 
 ## 5. ملاحظات أصغر (تحسينات)
+
+> **حالة (2026-10-22):** تم — `secretsInResponse` يتبع `<script src>` من نفس الأصل (حتى 10)؛ `VOLATILE_JSON_KEY` يطابق camelCase عبر snake_casing (`updatedAt`/`csrfToken`)؛ الـ sender يستخدم `getSetCookie()` ويعيد مصفوفة. ما زال مفتوحًا: ربط `ScanTelemetry` بعدّاد الطلبات في `GuardedClient` (أدناه).
 
 - الفحوصات السلبية الخمس تطلب `rootUrl` خمس مرات؛ اطلبه مرة وشاركه.
 - `tlsRedirect` و`HSTS` على root بـ `http://` (معمل محلي) ينتجان ضجيجًا دائمًا؛ تخطَّهما حين يكون root غير https.
