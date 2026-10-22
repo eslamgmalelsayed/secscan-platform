@@ -11,7 +11,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fromHar, fromOpenApi } from '@secscan/importers';
-import type { RecordedRequest } from '@secscan/engine';
+import { discoverServices, type RecordedRequest } from '@secscan/engine';
 import { runScan } from './run';
 
 type Args = Record<string, string | boolean>;
@@ -35,6 +35,7 @@ const USAGE = `secscan — authorized, non-destructive local scanner
 
   secscan quick <url>       one step: crawl the public surface and scan it
                             (add --identities to cover logins + enable IDOR)
+  secscan services <host>   non-destructive connect scan of an owned host
 
 secscan scan — scan from recorded flows
 
@@ -58,6 +59,7 @@ Optional:
 async function main() {
   const { cmd, args, positionals } = parse(process.argv.slice(2));
   if (cmd === 'quick') return quick(positionals[0] ?? (args.url as string), args);
+  if (cmd === 'services') return services(positionals[0] ?? (args.host as string), args);
   if (cmd === 'help' || args.help || (cmd !== 'scan')) { console.log(USAGE); process.exit(cmd === 'scan' || cmd === 'help' ? 0 : 1); }
 
   const host = args.host as string;
@@ -123,6 +125,16 @@ async function quick(url: string, args: Args) {
   if (res.notTested.length) console.log('  not tested:\n' + res.notTested.map((n) => `   - ${n}`).join('\n'));
   console.log(`\n[secscan] reports written: ${out}.ar.md, ${out}.en.md`);
   if (!nIds) console.log('[secscan] tip: add --identities to test logged-in pages and turn on the IDOR/cross-tenant engine.');
+}
+
+/** `secscan services <host>` — non-destructive connect scan of one owned host. */
+async function services(host: string, args: Args) {
+  if (!host) fail('usage: secscan services <host> [--ports 80,443,8080] [--timeout-ms 1500]');
+  const ports = args.ports ? String(args.ports).split(',').map((p) => Number(p.trim())).filter(Boolean) : undefined;
+  console.log(`[secscan] connect scan of ${host} (non-destructive; owned host only)…`);
+  const open = await discoverServices(host, { ports, timeoutMs: args['timeout-ms'] ? Number(args['timeout-ms']) : undefined });
+  if (!open.length) console.log('[secscan] no open ports found in the probed set.');
+  else { console.log(`[secscan] open ports:`); for (const o of open) console.log(`   - ${host}:${o.port}`); }
 }
 
 function fail(msg: string): never {

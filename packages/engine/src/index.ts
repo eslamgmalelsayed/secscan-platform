@@ -12,5 +12,6 @@ export * from './pacing';
 export * from './ownership';
 export * from './httpSender';
 export * from './discover';
+export * from './services';
 export * from './telemetry';
 export * from './scanner';

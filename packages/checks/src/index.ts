@@ -4,5 +4,8 @@ export * from './config';
 export * from './active';
 export * from './injection';
 export * from './logic';
+export * from './session';
+export * from './mobile';
+export * from './exploit';
 export * from './jwt';
 export * from './run';

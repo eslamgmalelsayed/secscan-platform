@@ -6,6 +6,7 @@
     "build": "npm run build -w @secscan/shared -w @secscan/engine -w @secscan/checks -w @secscan/importers -w @secscan/report -w @secscan/workers -w @secscan/api -w @secscan/cli -w @secscan/web",
     "build:web": "npm run build -w @secscan/web",
     "scan": "node packages/cli/dist/secscan.js",
+    "local": "node scripts/local.mjs",
     "test": "npm run test --workspaces --if-present",
     "lint": "node scripts/typecheck.mjs",
     "typecheck": "node scripts/typecheck.mjs",

@@ -7,6 +7,7 @@ import { type Finding, reportable, sortFindings } from '@secscan/shared';
 import { ScanStopped } from '@secscan/engine';
 import type { CheckContext } from './context';
 import { securityHeaders, cookies, tlsRedirect, infoDisclosure, secretsInResponse } from './passive';
+import { weakSessionToken } from './session';
 import { corsMisconfig, openRedirect } from './config';
 import { reflectedInput, sqliDifferential } from './active';
 import { ssti, pathTraversal, nosqlDifferential, hostHeaderInjection } from './injection';
@@ -38,7 +39,7 @@ export async function runChecks(ctx: CheckContext, opts: RunChecksOptions = {}):
   const plan: [string, boolean, (c: CheckContext) => Promise<Finding[]>][] = [
     ['securityHeaders', run.passive, securityHeaders], ['cookies', run.passive, cookies],
     ['tlsRedirect', run.passive, tlsRedirect], ['infoDisclosure', run.passive, infoDisclosure],
-    ['secretsInResponse', run.passive, secretsInResponse],
+    ['secretsInResponse', run.passive, secretsInResponse], ['weakSessionToken', run.passive, weakSessionToken],
     ['corsMisconfig', run.config, corsMisconfig], ['openRedirect', run.config, openRedirect],
     ['reflectedInput', run.active, reflectedInput], ['sqliDifferential', run.active, sqliDifferential],
     ['ssti', run.active, ssti], ['pathTraversal', run.active, pathTraversal],
