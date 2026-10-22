@@ -70,4 +70,26 @@ describe('runScan (one-command, injected sender)', () => {
     // and it records that it discovered endpoints
     expect(res.notTested.some((n) => n.includes('discovered'))).toBe(true);
   });
+
+  it('quick mode WITH identities runs the full suite: crawls logged-in and finds an authz issue', async () => {
+    const html = (body: string): RecordedResponse => ({ status: 200, headers: { 'content-type': 'text/html' }, body });
+    // logged-in home links to a per-user order; the order endpoint is vulnerable
+    // (any session reads any order). Anonymous sees nothing.
+    const app: Sender = async (req: RecordedRequest, ident: Identity) => {
+      const p = new URL(req.url).pathname;
+      if (!ident.sessionRef) return { status: 401, headers: { 'content-type': 'application/json' }, body: '{"e":"login"}' };
+      if (p === '/') return html('<a href="/orders/101">my order</a>');
+      if (p === '/orders/101') return json(200, '{"order":101,"buyer":"alice"}'); // IDOR/cross-tenant
+      return json(404, '{}');
+    };
+    const res = await runScan(
+      { host: HOST, root: `https://${HOST}/`, flows: [], discover: { maxPages: 10 }, identitiesFile, allowPrivate: true },
+      { sender: app, fingerprintSecret: 'test-secret' },
+    );
+    expect(res.status).toBe('done');
+    // crawled as a logged-in identity, so the authorization engine ran and flagged
+    // the shared order. No owner label on a crawled flow => it's a review candidate.
+    expect(res.review).toBeGreaterThanOrEqual(1);
+    expect(res.notTested.some((n) => n.includes("as 'customer/t1'"))).toBe(true);
+  });
 });

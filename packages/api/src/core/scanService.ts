@@ -151,16 +151,27 @@ export class ScanService {
 
     try {
       // One-URL path: when no flows were supplied, crawl the public surface from
-      // the root through this same scope-guarded, paced client. Discovered flows
-      // are anonymous (scorecard + active checks); the IDOR engine still needs
-      // identities, so a discovered scan with no identities finds no authz issues.
+      // the root through this same scope-guarded, paced client. When test
+      // identities are supplied we crawl AS the first one and stamp its role, so
+      // the discovered endpoints become authorization candidates and the full
+      // suite (authz-diffing + checks) runs on the logged-in surface; the authz
+      // engine then replays each under the other identities. With no identities
+      // the crawl is anonymous — public surface only, no object-level checks.
       const discoverNotes: string[] = [];
       let flows = req.flows;
       const rootForCrawl = req.rootUrl ?? `${rec.grant.targets[0].scheme}://${rec.grant.targets[0].host}/`;
       if (!flows.length && req.discover) {
-        flows = await discoverFlows(client, rootForCrawl, { maxPages: req.discover.maxPages, maxFlows: req.discover.maxFlows });
-        discoverNotes.push(`discovered ${flows.length} endpoint(s) by crawling ${rootForCrawl}`);
-        if (!req.identities.length) discoverNotes.push('crawl ran anonymously: object-level (IDOR/cross-tenant) checks need test identities and were not run');
+        const crawlAs = req.identities[0]; // undefined => anonymous crawl
+        flows = await discoverFlows(client, rootForCrawl, {
+          maxPages: req.discover.maxPages, maxFlows: req.discover.maxFlows,
+          identity: crawlAs, capturedAsRole: crawlAs?.role, capturedAsTenant: crawlAs?.tenant ?? null,
+        });
+        discoverNotes.push(`discovered ${flows.length} endpoint(s) by crawling ${rootForCrawl}${crawlAs ? ` as '${crawlAs.role}${crawlAs.tenant ? '/' + crawlAs.tenant : ''}'` : ' anonymously'}`);
+        if (!req.identities.length) {
+          discoverNotes.push('crawl ran anonymously: object-level (IDOR/cross-tenant) checks need test identities and were not run');
+        } else {
+          discoverNotes.push('authorization checks ran on the discovered surface; an object match on a crawled endpoint goes to review as `likely` (no owner label) — confirm ownership to promote it');
+        }
       }
 
       // §7: verify sessions that have a liveness probe; drop and report dead ones.
