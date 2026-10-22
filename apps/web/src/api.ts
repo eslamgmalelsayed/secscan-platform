@@ -66,6 +66,10 @@ export const api = {
   flows: {
     import: (body: unknown) => call<{ count: number; flows: Flow[] }>('POST', '/flows/import', body),
   },
+  messages: {
+    // Broadcast a message to every device that has /display open (serve/desktop mode).
+    broadcast: (text: string) => call<{ delivered: number }>('POST', '/messages/broadcast', { text }),
+  },
   scans: {
     list: () => call<ScanSummary[]>('GET', '/scans'),
     get: (id: string) => call<ScanRecord>('GET', `/scans/${id}`),

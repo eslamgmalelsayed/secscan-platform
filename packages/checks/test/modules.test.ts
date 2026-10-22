@@ -46,13 +46,16 @@ describe('static mobile analysis', () => {
   it('finds hardcoded secrets, cleartext config, exported components, and endpoints', () => {
     const r = analyzeMobileArtifact([
       { name: 'res/values/strings.xml', content: 'key AIzaSyA1234567890abcdefghijklmnopqrstuv0 end' },
-      { name: 'AndroidManifest.xml', content: '<application android:usesCleartextTraffic="true"><activity android:name=".X" android:exported="true"/></application>' },
+      { name: 'AndroidManifest.xml', content: '<application android:debuggable="true" android:allowBackup="true" android:usesCleartextTraffic="true"><activity android:name=".X" android:exported="true"/></application>' },
       { name: 'classes/Config.txt', content: 'base = https://api.myapp.example/v1/login and https://schemas.android.com/apk ignore' },
     ]);
     const cats = new Set(r.findings.map((f) => f.id.split('-')[1]));
+    const titles = r.findings.map((f) => f.title.en);
     expect(cats.has('secret_exposure')).toBe(true);
     expect(cats.has('tls')).toBe(true);           // cleartext
     expect(cats.has('access_control')).toBe(true); // exported component
+    expect(titles.some((t) => t.includes('Debuggable'))).toBe(true);   // resilience
+    expect(titles.some((t) => t.includes('Backup allowed'))).toBe(true); // resilience
     expect(r.endpoints).toContain('https://api.myapp.example');
     expect(r.endpoints.some((e) => e.includes('schemas.android.com'))).toBe(false);
   });

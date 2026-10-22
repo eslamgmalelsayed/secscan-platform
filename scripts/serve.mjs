@@ -17,8 +17,28 @@ import { resolve, normalize } from 'node:path';
 import { buildApp, LabPolicy } from '@secscan/api';
 import { createHttpSender, SecretStore, loadIdentities } from '@secscan/engine';
 import { readFileSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
+
+function localLanIp() {
+  for (const addrs of Object.values(networkInterfaces())) for (const a of addrs ?? []) {
+    if (a.family === 'IPv4' && !a.internal) return a.address;
+  }
+  return undefined;
+}
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.map': 'application/json' };
+
+// The receiver page any device opens to display messages the console broadcasts.
+const DISPLAY_PAGE = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SecScan Display</title>
+<style>html,body{margin:0;height:100%;background:#0b1020;color:#e8eefc;font:16px/1.5 system-ui,sans-serif}
+.wrap{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;box-sizing:border-box}
+.msg{background:#16203c;border:1px solid #2b3a63;border-radius:14px;padding:18px 22px;max-width:680px;width:100%;box-shadow:0 8px 40px rgba(0,0,0,.4)}
+.msg .t{font-size:22px;font-weight:600}.msg .a{opacity:.6;font-size:12px;margin-top:6px}
+.idle{opacity:.55}.dot{width:8px;height:8px;border-radius:50%;background:#4cc9f0;display:inline-block;margin-right:6px;animation:p 1.4s infinite}@keyframes p{50%{opacity:.3}}</style></head>
+<body><div class="wrap" id="w"><div class="idle"><span class="dot"></span>connected — waiting for a message…</div></div>
+<script>const w=document.getElementById('w');const es=new EventSource('/api/messages/stream');
+es.onmessage=e=>{try{const m=JSON.parse(e.data);const d=document.createElement('div');d.className='msg';d.innerHTML='<div class="t"></div><div class="a"></div>';d.querySelector('.t').textContent=m.text;d.querySelector('.a').textContent=new Date(m.at).toLocaleTimeString();w.innerHTML='';w.appendChild(d);}catch(_){}};
+es.onerror=()=>{};</script></body></html>`;
 
 export async function startServer(opts = {}) {
   const root = resolve(import.meta.dirname, '..');
@@ -39,8 +59,40 @@ export async function startServer(opts = {}) {
   });
   await api.listen(apiPort, '127.0.0.1');
 
+  // Device messaging: Server-Sent Events hub. Any device opens /display in a
+  // browser and subscribes; the console POSTs /api/messages/broadcast and every
+  // open receiver shows the message. Plain HTTP, no extra deps, no install.
+  const receivers = new Set();
+  const broadcast = (text) => {
+    const payload = `data: ${JSON.stringify({ text, at: new Date().toISOString() })}\n\n`;
+    for (const r of receivers) { try { r.write(payload); } catch { receivers.delete(r); } }
+    return receivers.size;
+  };
+
   const front = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
+
+    if (url.pathname === '/api/messages/stream' && req.method === 'GET') {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+      res.write('retry: 2000\n\n');
+      receivers.add(res);
+      req.on('close', () => receivers.delete(res));
+      return;
+    }
+    if (url.pathname === '/api/messages/broadcast' && req.method === 'POST') {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c)).on('end', () => {
+        let text = ''; try { text = JSON.parse(Buffer.concat(chunks).toString() || '{}').text ?? ''; } catch { /* ignore */ }
+        const delivered = text ? broadcast(String(text).slice(0, 2000)) : 0;
+        res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ delivered }));
+      });
+      return;
+    }
+    if (url.pathname === '/display') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(DISPLAY_PAGE);
+    }
+
     // proxy /api/* -> API (strip the prefix)
     if (url.pathname.startsWith('/api/') || url.pathname === '/api') {
       const path = (url.pathname.replace(/^\/api/, '') || '/') + url.search;
@@ -66,10 +118,15 @@ export async function startServer(opts = {}) {
     res.writeHead(200, { 'content-type': MIME[ext] ?? 'application/octet-stream' });
     createReadStream(file).pipe(res);
   });
-  await new Promise((r) => front.listen(webPort, '127.0.0.1', r));
+  // Loopback by default. Set SECSCAN_HOST=0.0.0.0 (or pass host) to let OTHER
+  // devices on your LAN open /display and reach the console — opt-in, because it
+  // exposes the dev-trust UI on the network.
+  const host = opts.host ?? process.env.SECSCAN_HOST ?? '127.0.0.1';
+  await new Promise((r) => front.listen(webPort, host, r));
 
-  const url = `http://127.0.0.1:${webPort}`;
-  return { url, close: async () => { front.close(); await api.close(); } };
+  const shown = host === '0.0.0.0' ? (localLanIp() ?? host) : host;
+  const url = `http://${shown}:${webPort}`;
+  return { url, host, close: async () => { front.close(); await api.close(); } };
 }
 
 // Run directly: npm run serve

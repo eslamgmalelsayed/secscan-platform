@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api, type Health, type ScanSummary } from '../api';
-import { attempt } from '../toast';
+import { attempt, notify } from '../toast';
 
 defineProps<{ health: Health | null }>();
 const emit = defineEmits<{ go: [view: 'overview' | 'grants' | 'scan' | 'results']; 'open-scan': [id: string] }>();
@@ -24,6 +24,13 @@ async function runQuick() {
   const scan = await attempt(() => api.scans.quick(quickUrl.value.trim()), 'quick scan done');
   quickBusy.value = false;
   if (scan) { quickUrl.value = ''; load(); emit('open-scan', scan.id); }
+}
+
+const msg = ref('');
+async function broadcast() {
+  if (!msg.value.trim()) return;
+  const r = await attempt(() => api.messages.broadcast(msg.value.trim()));
+  if (r) { notify(`sent to ${r.delivered} device(s)`); msg.value = ''; }
 }
 </script>
 
@@ -62,6 +69,16 @@ async function runQuick() {
       <div class="row" style="gap: 8px; margin-top: 10px">
         <input v-model="quickUrl" placeholder="https://localhost:3000/" style="flex: 1" @keyup.enter="runQuick" />
         <button class="btn primary" :disabled="quickBusy || !quickUrl.trim()" @click="runQuick">{{ quickBusy ? 'Scanning…' : 'Scan' }}</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 16px">
+      <h3>Broadcast to devices</h3>
+      <p class="sub">Open <code>/display</code> on any device (phone, tablet, TV browser) on the network, then send a message — it pops on every open receiver. Run with <code>SECSCAN_HOST=0.0.0.0</code> so other devices can reach it.</p>
+      <div class="row" style="gap: 8px; margin-top: 10px">
+        <input v-model="msg" placeholder="message to show on your devices" style="flex: 1" @keyup.enter="broadcast" />
+        <button class="btn" :disabled="!msg.trim()" @click="broadcast">Send</button>
+        <a class="btn sm" href="/display" target="_blank">Open receiver</a>
       </div>
     </div>
 

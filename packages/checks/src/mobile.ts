@@ -61,6 +61,31 @@ export function analyzeMobileArtifact(entries: MobileEntry[]): MobileReport {
         }));
       }
     }
+    // RESILIENCE: debuggable build — anyone can attach a debugger and step past
+    // any client-side check (license, IAP, integrity). Your own app's posture.
+    if (/android:debuggable\s*=\s*"true"/i.test(text)) {
+      findings.push(mk({
+        category: 'access_control', severity: 'high', confidence: 'confirmed',
+        title: t('حزمة قابلة للتصحيح (debuggable)', 'Debuggable build'),
+        description: t(`${e.name} يعلن android:debuggable="true" — يمكن إرفاق مصحّح وتجاوز أي فحص على جهة العميل.`, `${e.name} declares android:debuggable="true" — a debugger can be attached and any client-side check stepped past.`),
+        impact: t('تجاوز فحوصات الترخيص/الشراء/السلامة محليًا؛ أي حماية على الجهاز قابلة للتخطّي.', 'Local bypass of license/IAP/integrity checks; any on-device protection is defeatable.'),
+        remediation: t('اضبط debuggable=false في البناء الإنتاجي، والأهم: تحقّق من الترخيص/الشراء على الخادم لا على العميل.', 'Set debuggable=false in release builds, and — more importantly — validate license/purchase on the server, not the client.'),
+        location: e.name, evidence: [{ kind: 'note', label: 'flag', content: 'android:debuggable="true"' }],
+        cvss: { AV: 'L', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'H', A: 'N' }, idSeed: `${e.name}|debuggable`,
+      }));
+    }
+    // RESILIENCE: backup allowed — app data is extractable over adb.
+    if (/android:allowBackup\s*=\s*"true"/i.test(text)) {
+      findings.push(mk({
+        category: 'info_disclosure', severity: 'medium', confidence: 'confirmed',
+        title: t('النسخ الاحتياطي مسموح (allowBackup)', 'Backup allowed (allowBackup)'),
+        description: t(`${e.name} يسمح بالنسخ الاحتياطي — بيانات التطبيق قابلة للاستخراج عبر adb.`, `${e.name} allows backup — app data is extractable over adb.`),
+        impact: t('استخراج توكنات/أسرار/حالة محفوظة من بيانات التطبيق.', 'Extraction of tokens/secrets/saved state from app data.'),
+        remediation: t('اضبط allowBackup=false أو استثنِ البيانات الحساسة من النسخ.', 'Set allowBackup=false or exclude sensitive data from backups.'),
+        location: e.name, evidence: [{ kind: 'note', label: 'flag', content: 'android:allowBackup="true"' }],
+        cvss: { AV: 'L', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' }, idSeed: `${e.name}|allowbackup`,
+      }));
+    }
     // cleartext traffic allowed (Android manifest / network security config)
     if (/usesCleartextTraffic\s*=\s*"true"|cleartextTrafficPermitted\s*=\s*"true"|<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/i.test(text)) {
       findings.push(mk({

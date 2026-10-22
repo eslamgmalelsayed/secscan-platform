@@ -9,6 +9,22 @@
  * then covers port by port.
  */
 import { Socket } from 'node:net';
+import { networkInterfaces } from 'node:os';
+
+/** The agent host's own LAN as a /24 CIDR (e.g. 192.168.1.0/24), or undefined
+ *  if no private IPv4 interface is found. Used by the agent to scan the network
+ *  it is actually on. */
+export function localSubnetCidr(): string | undefined {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === 'IPv4' && !a.internal && /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(a.address)) {
+        const o = a.address.split('.');
+        return `${o[0]}.${o[1]}.${o[2]}.0/24`;
+      }
+    }
+  }
+  return undefined;
+}
 
 /** Common web/app/management ports. Callers may pass their own set. */
 export const COMMON_PORTS = [80, 81, 443, 3000, 3001, 5000, 8000, 8008, 8080, 8081, 8443, 8888, 9000, 9090];
