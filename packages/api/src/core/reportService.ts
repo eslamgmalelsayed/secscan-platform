@@ -15,7 +15,7 @@ export class ReportService {
     if (!engagement) throw new Error(`engagement ${engagementId} not found`);
     const scan = this.scans.get(scanId);
     if (!scan) throw new Error(`scan ${scanId} not found`);
-    const input: ReportInput = { engagement: engagement as Engagement, findings: scan.findings };
+    const input: ReportInput = { engagement: engagement as Engagement, findings: [...scan.findings, ...(scan.review ?? [])] };
     return renderMarkdown(input, { lang, notTested: scan.notTested });
   }
 }

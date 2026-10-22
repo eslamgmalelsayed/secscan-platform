@@ -20,10 +20,13 @@ export class DomainErrorFilter implements ExceptionFilter {
     } else if (err instanceof ZodError) {
       status = HttpStatus.BAD_REQUEST;
       message = err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-    } else if (err instanceof Error) {
-      // not-found style messages -> 404, otherwise 400 for known throws
-      status = /not found/i.test(err.message) ? HttpStatus.NOT_FOUND : HttpStatus.BAD_REQUEST;
+    } else if (err instanceof Error && (err.name === 'NotFoundError' || /not found$/i.test(err.message))) {
+      status = HttpStatus.NOT_FOUND;
       message = err.message;
+    } else {
+      // Unknown failure: a real 500. Log it server-side; never echo internals to the client.
+      // eslint-disable-next-line no-console
+      console.error('[secscan] unhandled error:', err);
     }
     res.status(status).send({ error: message, statusCode: status });
   }

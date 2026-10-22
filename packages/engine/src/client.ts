@@ -7,8 +7,13 @@ import type { Identity, RecordedRequest, RecordedResponse } from './http';
 import { classify } from './classifier';
 import { ScopeGuard } from './scope';
 
+export interface SendOptions {
+  /** Connect to this address (already scope-checked) instead of re-resolving the host. */
+  pinnedAddress?: string;
+}
+
 /** A transport: performs the request for an identity. Injected (testable). */
-export type Sender = (req: RecordedRequest, identity: Identity) => Promise<RecordedResponse>;
+export type Sender = (req: RecordedRequest, identity: Identity, opts?: SendOptions) => Promise<RecordedResponse>;
 
 export class ScopeRefused extends Error {
   constructor(public decision: string, public reason: string) {
@@ -24,12 +29,12 @@ export class GuardedClient {
 
   async send(req: RecordedRequest, identity: Identity): Promise<RecordedResponse> {
     const isStateChanging = classify(req) === 'state_changing';
-    const verdict = this.scope.check(req.url, req.method, { isStateChanging });
+    const verdict = await this.scope.check(req.url, req.method, { isStateChanging });
     if (!verdict.allowed) {
       const r = new ScopeRefused(verdict.decision, verdict.reason);
       this.refused.push(r);
       throw r;
     }
-    return this.sender(req, identity);
+    return this.sender(req, identity, { pinnedAddress: verdict.address });
   }
 }

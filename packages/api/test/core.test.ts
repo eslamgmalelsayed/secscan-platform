@@ -61,10 +61,21 @@ describe('authorization lifecycle', () => {
     auth.ownerSign('g1', ownerLink, 'owner@lab.sa');
     auth.adminApprove('g1', 'admin');
     const actions = audit.list('g1').map((e) => e.action);
-    expect(actions).toEqual(['grant_created', 'ownership_verified', 'owner_signed', 'admin_approved', 'grant_activated']);
+    expect(actions).toEqual(['grant_created', 'ownership_recorded_manually', 'owner_signed', 'admin_approved', 'grant_activated']);
     // the returned list is a copy: mutating it does not change the log
     audit.list('g1').pop();
     expect(audit.list('g1').length).toBe(5);
+  });
+
+  it('automatic ownership proof only flips the flag when every target passes, and audits failures', async () => {
+    auth.createGrant(grantInput(), 'a@agency.sa');
+    const fail = await auth.verifyOwnership('g1', 'system', { resolveTxt: async () => [['secscan-verify=wrong']] });
+    expect(fail.verification.ok).toBe(false);
+    expect(grants.get('g1')!.ownershipVerified).toBe(false);
+    const ok = await auth.verifyOwnership('g1', 'system', { resolveTxt: async () => [['secscan-verify=tok']] });
+    expect(ok.verification.ok).toBe(true);
+    expect(grants.get('g1')!.ownershipVerified).toBe(true);
+    expect(audit.list('g1').map((e) => e.action)).toEqual(['grant_created', 'ownership_verification_failed', 'ownership_verified']);
   });
 
   it('revoke stops a previously-active grant', () => {
@@ -88,7 +99,7 @@ describe('LabPolicy gate (§3.2)', () => {
   it('rejects a target outside the lab allow-list', async () => {
     activateGrant('evil.example.com');
     const svc = new ScanService({
-      auth, lab: new LabPolicy(false, [LAB_HOST]), scans, audit,
+      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit,
       sender: vulnOrders, fingerprintSecret: 's', resolveHost: () => ['10.0.0.5'],
     });
     await expect(svc.run({ engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin' }))
@@ -104,7 +115,7 @@ describe('session liveness (§7)', () => {
       return vulnOrders(req, ident);
     };
     const svc = new ScanService({
-      auth, lab: new LabPolicy(false, [LAB_HOST]), scans, audit, sender, fingerprintSecret: 's',
+      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit, sender, fingerprintSecret: 's',
       liveness: { 'sess-alice': `https://${LAB_HOST}/me`, 'sess-bob': `https://${LAB_HOST}/me` },
       pacing: { requestsPerSecond: 1000 },
     });
@@ -120,7 +131,7 @@ describe('scope-gated scan + report', () => {
   it('runs on a lab target and confirms a BOLA finding', async () => {
     activateGrant(LAB_HOST);
     const svc = new ScanService({
-      auth, lab: new LabPolicy(false, [LAB_HOST]), scans, audit,
+      auth, lab: new LabPolicy(false, [LAB_HOST], { allowPrivateTargets: true }), scans, audit,
       sender: vulnOrders, fingerprintSecret: 's', resolveHost: () => ['10.0.0.5'],
     });
     const scan = await svc.run({ engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin' });

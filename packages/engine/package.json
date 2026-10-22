@@ -10,11 +10,12 @@
   },
   "dependencies": {
     "@secscan/shared": "*",
+    "undici": "^7.30.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
-    "vitest": "^3.0.0"
+    "vitest": "^5.0.5"
   }
 }

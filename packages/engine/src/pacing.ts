@@ -41,7 +41,7 @@ export function pacedSender(sender: Sender, opts: PacingOptions = {}): PacedSend
   const stats = { requests: 0, startedAt };
   let nextAllowedAt = startedAt;
 
-  const send: Sender = async (req, ident) => {
+  const send: Sender = async (req, ident, sendOpts) => {
     if (opts.signal?.aborted) throw new ScanStopped('aborted', stats.requests);
     if (opts.maxDurationMs != null && now() - startedAt >= opts.maxDurationMs) throw new ScanStopped('deadline', stats.requests);
     const wait = nextAllowedAt - now();
@@ -49,7 +49,7 @@ export function pacedSender(sender: Sender, opts: PacingOptions = {}): PacedSend
     nextAllowedAt = Math.max(now(), nextAllowedAt) + minGap;
     if (opts.signal?.aborted) throw new ScanStopped('aborted', stats.requests);
     stats.requests++;
-    return sender(req, ident);
+    return sender(req, ident, sendOpts);
   };
   return Object.assign(send, { stats });
 }

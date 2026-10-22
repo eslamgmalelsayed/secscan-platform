@@ -4,20 +4,32 @@
  * external scorecard that needs only proof of ownership.
  */
 import type { Finding } from '@secscan/shared';
+import type { RecordedResponse } from '@secscan/engine';
 import { build, header, safeSend, type CheckContext } from './context';
 
 const t = (ar: string, en: string) => ({ ar, en });
 
+/** One GET of the root per scan, shared by every passive check. */
+const rootCache = new WeakMap<CheckContext, Promise<RecordedResponse | null>>();
+export function fetchRoot(ctx: CheckContext): Promise<RecordedResponse | null> {
+  let p = rootCache.get(ctx);
+  if (!p) { p = safeSend(ctx, { method: 'GET', url: ctx.rootUrl }); rootCache.set(ctx, p); }
+  return p;
+}
+
+const isHttpsRoot = (ctx: CheckContext): boolean => ctx.rootUrl.toLowerCase().startsWith('https:');
+
 export async function securityHeaders(ctx: CheckContext): Promise<Finding[]> {
-  const resp = await safeSend(ctx, { method: 'GET', url: ctx.rootUrl });
+  const resp = await fetchRoot(ctx);
   if (!resp) return [];
   const present = new Set(Object.keys(resp.headers).map((k) => k.toLowerCase()));
   const want: [string, 'medium' | 'low', string, string][] = [
-    ['strict-transport-security', 'medium', 'يفرض HTTPS ويمنع SSL stripping', 'forces HTTPS, prevents SSL stripping'],
     ['content-security-policy', 'medium', 'يحد مصادر السكربت ويخفف XSS', 'limits script sources, mitigates XSS'],
     ['x-content-type-options', 'low', 'يمنع MIME sniffing', 'stops MIME sniffing'],
     ['x-frame-options', 'low', 'يمنع clickjacking', 'prevents clickjacking'],
   ];
+  // HSTS only means something on an https origin; on a plain-http lab root it is noise.
+  if (isHttpsRoot(ctx)) want.unshift(['strict-transport-security', 'medium', 'يفرض HTTPS ويمنع SSL stripping', 'forces HTTPS, prevents SSL stripping']);
   const out: Finding[] = [];
   for (const [h, sev, whyAr, whyEn] of want) {
     if (!present.has(h)) {
@@ -37,30 +49,41 @@ export async function securityHeaders(ctx: CheckContext): Promise<Finding[]> {
   return out;
 }
 
+/** One finding per Set-Cookie line (the sender keeps them newline-separated).
+ *  `Secure` is only expected on an https origin. Attribute VALUES are never
+ *  put in evidence — only the cookie name and the missing flags. */
 export async function cookies(ctx: CheckContext): Promise<Finding[]> {
-  const resp = await safeSend(ctx, { method: 'GET', url: ctx.rootUrl });
+  const resp = await fetchRoot(ctx);
   if (!resp) return [];
   const sc = header(resp, 'set-cookie');
   if (!sc) return [];
-  const low = sc.toLowerCase();
-  const name = sc.split('=', 1)[0].trim();
-  const missing = (['secure', 'httponly'] as const).filter((f) => !low.includes(f));
-  if (!low.includes('samesite')) missing.push('samesite' as any);
-  if (missing.length === 0) return [];
-  return [build({
-    category: 'insecure_cookie', severity: 'medium', confidence: 'confirmed',
-    title: t(`كوكي '${name}' ناقصها أعلام: ${missing.join(', ')}`, `Cookie '${name}' missing flags: ${missing.join(', ')}`),
-    description: t('كوكي جلسة بدون هذه الأعلام معرّضة للسرقة وCSRF.', 'Session cookies without these flags are exposed to theft and CSRF.'),
-    impact: t('اختطاف الجلسة أو CSRF.', 'Session hijacking or CSRF.'),
-    remediation: t('اضبط Secure و HttpOnly و SameSite=Lax/Strict.', 'Set Secure, HttpOnly and SameSite=Lax/Strict.'),
-    asset: new URL(ctx.rootUrl).host,
-    evidence: [{ kind: 'response', label: 'set-cookie', content: low }],
-    cvss: { AV: 'N', AC: 'H', PR: 'N', UI: 'R', S: 'U', C: 'L', I: 'L', A: 'N' },
-    idSeed: `${ctx.rootUrl}|cookie|${name}`,
-  }, ctx.grantFingerprint)];
+  const out: Finding[] = [];
+  for (const line of sc.split('\n').map((l) => l.trim()).filter(Boolean)) {
+    const attrs = line.split(';').slice(1).map((a) => a.trim().toLowerCase());
+    const name = line.split('=', 1)[0].trim();
+    const missing: string[] = [];
+    if (isHttpsRoot(ctx) && !attrs.includes('secure')) missing.push('Secure');
+    if (!attrs.includes('httponly')) missing.push('HttpOnly');
+    if (!attrs.some((a) => a.startsWith('samesite='))) missing.push('SameSite');
+    if (missing.length === 0) continue;
+    out.push(build({
+      category: 'insecure_cookie', severity: 'medium', confidence: 'confirmed',
+      title: t(`كوكي '${name}' ناقصها أعلام: ${missing.join(', ')}`, `Cookie '${name}' missing flags: ${missing.join(', ')}`),
+      description: t('كوكي جلسة بدون هذه الأعلام معرّضة للسرقة وCSRF.', 'Session cookies without these flags are exposed to theft and CSRF.'),
+      impact: t('اختطاف الجلسة أو CSRF.', 'Session hijacking or CSRF.'),
+      remediation: t('اضبط Secure و HttpOnly و SameSite=Lax/Strict.', 'Set Secure, HttpOnly and SameSite=Lax/Strict.'),
+      asset: new URL(ctx.rootUrl).host,
+      evidence: [{ kind: 'response', label: 'cookie', content: `${name}; attributes present: ${attrs.map((a) => a.split('=')[0]).join(', ') || 'none'}` }],
+      cvss: { AV: 'N', AC: 'H', PR: 'N', UI: 'R', S: 'U', C: 'L', I: 'L', A: 'N' },
+      idSeed: `${ctx.rootUrl}|cookie|${name}`,
+    }, ctx.grantFingerprint));
+  }
+  return out;
 }
 
+/** Only meaningful when the real root is https; a plain-http lab has nothing to redirect to. */
 export async function tlsRedirect(ctx: CheckContext): Promise<Finding[]> {
+  if (!isHttpsRoot(ctx)) return [];
   const httpUrl = ctx.rootUrl.replace(/^https:/, 'http:');
   const resp = await safeSend(ctx, { method: 'GET', url: httpUrl });
   if (!resp) return [];
@@ -83,7 +106,7 @@ const LEAKY = ['server', 'x-powered-by', 'x-aspnet-version', 'x-generator'];
 const STACK = ['traceback (most recent call last)', 'java.lang.', 'at org.springframework', 'you have an error in your sql syntax', 'system.web.'];
 
 export async function infoDisclosure(ctx: CheckContext): Promise<Finding[]> {
-  const resp = await safeSend(ctx, { method: 'GET', url: ctx.rootUrl });
+  const resp = await fetchRoot(ctx);
   if (!resp) return [];
   const out: Finding[] = [];
   for (const h of LEAKY) {
@@ -127,7 +150,7 @@ const SECRET_PATTERNS: [RegExp, string][] = [
 ];
 
 export async function secretsInResponse(ctx: CheckContext): Promise<Finding[]> {
-  const resp = await safeSend(ctx, { method: 'GET', url: ctx.rootUrl });
+  const resp = await fetchRoot(ctx);
   if (!resp) return [];
   const out: Finding[] = [];
   for (const [re, label] of SECRET_PATTERNS) {

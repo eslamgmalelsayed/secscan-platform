@@ -25,8 +25,14 @@ function digest(resp: { body: string; headers: Record<string, string> }): string
   return bodyDigest(resp.body, ct);
 }
 
-/** Reflected input (potential XSS). Benign marker only; reflection is
- *  necessary-but-not-sufficient for XSS, so this is always needs_review. */
+/** The characters that must be encoded in HTML. Appended to the marker so an
+ *  encoded reflection (`&lt;`) can be told from a raw one. No script, no tag:
+ *  a canary, not a payload. */
+const HTML_SPECIALS = '<"\'>';
+
+/** Reflected input (potential XSS). Reported only when the HTML specials come
+ *  back RAW; an encoded reflection is correct behaviour and is not a finding.
+ *  Reflection is necessary-but-not-sufficient for XSS, so always needs_review. */
 export async function reflectedInput(ctx: CheckContext): Promise<Finding[]> {
   const out: Finding[] = [];
   for (const flow of ctx.flows) {
@@ -35,11 +41,11 @@ export async function reflectedInput(ctx: CheckContext): Promise<Finding[]> {
     try { params = new URL(flow.url).searchParams; } catch { continue; }
     for (const [name] of params) {
       const marker = 'sxz' + randomBytes(4).toString('hex');
-      const probe: RecordedRequest = { ...flow, url: withParam(flow.url, name, marker) };
+      const probe: RecordedRequest = { ...flow, url: withParam(flow.url, name, marker + HTML_SPECIALS) };
       const resp = await safeSend(ctx, probe, identityFor(ctx, flow));
       if (!resp) continue;
       const ct = (header(resp, 'content-type') ?? '').toLowerCase();
-      if (resp.body.includes(marker) && ct.includes('html')) {
+      if (resp.body.includes(marker + HTML_SPECIALS) && ct.includes('html')) {
         out.push(build({
           category: 'xss', severity: 'medium', confidence: 'needs_review',
           title: t(`إدخال منعكس بدون ترميز في '${name}'`, `Input reflected unescaped in '${name}'`),
@@ -47,7 +53,10 @@ export async function reflectedInput(ctx: CheckContext): Promise<Finding[]> {
           impact: t('احتمال تنفيذ سكربت في متصفح الضحية.', 'Possible script execution in a victim browser.'),
           remediation: t('رمّز المخرجات حسب السياق واستخدم CSP صارم.', 'Context-encode output and apply a strict CSP.'),
           asset: new URL(flow.url).host, location: `${flow.method} ${new URL(flow.url).pathname}`,
-          evidence: [{ kind: 'request', label: 'reflected param', content: name }],
+          evidence: [
+            { kind: 'request', label: 'reflected param', content: name },
+            { kind: 'note', label: 'encoding', content: 'HTML specials < " \' > returned unencoded' },
+          ],
           cvss: { AV: 'N', AC: 'L', PR: 'N', UI: 'R', S: 'C', C: 'L', I: 'L', A: 'N' },
           idSeed: `${flow.url}|refl|${name}`,
         }, ctx.grantFingerprint));

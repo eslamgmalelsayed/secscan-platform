@@ -45,6 +45,7 @@ export async function runAccessControlScan(input: ScannerInput): Promise<ScanRes
 
   let stopped: ScanStopped | null = null;
   outer: for (const flow of input.flows) {
+    if (!flow.capturedAsRole) continue; // public/unlabeled flow: not an authz candidate (checks still cover it)
     const owner = ownerFor(flow, input.identities);
     if (!owner) {
       const who = `${flow.capturedAsRole ?? '(none)'}${flow.capturedAsTenant ? `/${flow.capturedAsTenant}` : ''}`;

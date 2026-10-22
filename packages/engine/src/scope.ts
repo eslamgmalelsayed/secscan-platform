@@ -2,9 +2,15 @@
  * Scope enforcement — the mandatory Scope Proxy gate (Design §3, §8).
  * Every outbound request is adjudicated here before it is sent. A request not
  * covered by a live grant is refused (not warned) and the refusal is logged.
- * Even an in-scope host is refused if it resolves into private/reserved space
- * (SSRF / DNS-rebind guard).
+ *
+ * SSRF / DNS-rebinding guard (review 2.4): the host is resolved ONCE per scan
+ * (cached), checked against private/reserved space, and the resolved address
+ * is handed back so the transport connects to exactly that address. A name
+ * that later re-resolves to 127.0.0.1 cannot redirect the connection, because
+ * the connection never resolves it again.
  */
+import { promises as dns } from 'node:dns';
+import { isIP } from 'node:net';
 import { AuthorizationGrant, covers, isLive, targetFromUrl } from './authorization';
 
 export type Decision =
@@ -19,33 +25,42 @@ export interface ScopeVerdict {
   decision: Decision;
   reason: string;
   allowed: boolean;
+  /** The address the transport must connect to (set when a resolver ran). */
+  address?: string;
 }
 
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
-export type HostResolver = (host: string) => string[];
+export type HostResolver = (host: string) => string[] | Promise<string[]>;
+
+/** System DNS, all addresses. Used when no resolver is injected. */
+export const systemResolver: HostResolver = async (host) =>
+  (await dns.lookup(host, { all: true, verbatim: true })).map((a) => a.address);
 
 export interface ScopeGuardOptions {
+  /** Refuse hosts that resolve into private/reserved space. Default true. */
   blockPrivateAddresses?: boolean;
+  /** Injected for tests; defaults to system DNS when private blocking is on. */
   resolveHost?: HostResolver;
 }
 
 export class ScopeGuard {
   private grants: AuthorizationGrant[];
   private blockPrivate: boolean;
-  private resolve?: HostResolver;
+  private resolve: HostResolver;
+  private cache = new Map<string, Promise<string[]>>();
 
   constructor(grants: AuthorizationGrant[], opts: ScopeGuardOptions = {}) {
     this.grants = grants;
     this.blockPrivate = opts.blockPrivateAddresses ?? true;
-    this.resolve = opts.resolveHost;
+    this.resolve = opts.resolveHost ?? systemResolver;
   }
 
-  check(
+  async check(
     url: string,
     method: string,
     opts: { isStateChanging?: boolean; at?: Date } = {},
-  ): ScopeVerdict {
+  ): Promise<ScopeVerdict> {
     const at = opts.at ?? new Date();
     let t;
     try {
@@ -66,21 +81,26 @@ export class ScopeGuard {
       return verdict('deny_state_changing', `${method} ${t.host} is state-changing; no live grant permits it`);
     }
 
-    if (this.blockPrivate && this.pointsAtPrivateSpace(t.host)) {
-      return verdict('deny_private_address', `${t.host} resolves into private/reserved space`);
-    }
-    return verdict('allow', 'covered by live grant');
+    if (!this.blockPrivate) return verdict('allow', 'covered by live grant');
+
+    const addrs = await this.resolveOnce(t.host);
+    if (addrs.length === 0) return verdict('deny_private_address', `${t.host} did not resolve`);
+    if (addrs.some(isPrivateIp)) return verdict('deny_private_address', `${t.host} resolves into private/reserved space`);
+    return { ...verdict('allow', 'covered by live grant'), address: addrs[0] };
   }
 
-  private pointsAtPrivateSpace(host: string): boolean {
-    if (!this.resolve) return false; // no resolver injected: skip (used in unit tests)
-    let addrs: string[];
-    try {
-      addrs = this.resolve(host);
-    } catch {
-      return true; // cannot resolve safely => treat as unsafe
+  /** One lookup per host for the lifetime of this guard (= one scan). */
+  private resolveOnce(host: string): Promise<string[]> {
+    const bare = host.replace(/^\[|\]$/g, '');
+    if (isIP(bare)) return Promise.resolve([bare]);
+    let p = this.cache.get(host);
+    if (!p) {
+      p = Promise.resolve()
+        .then(() => this.resolve(host))
+        .catch(() => [] as string[]); // cannot resolve safely => treat as unsafe
+      this.cache.set(host, p);
     }
-    return addrs.length === 0 || addrs.some(isPrivateIp);
+    return p;
   }
 }
 

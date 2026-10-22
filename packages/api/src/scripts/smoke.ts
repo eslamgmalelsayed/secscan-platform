@@ -46,8 +46,9 @@ function check(name: string, cond: boolean, extra = '') {
 
 async function main() {
   const app = await buildApp({
-    lab: new LabPolicy(false, [LAB]), sender: vulnOrders,
-    fingerprintSecret: 'secret', resolveHost: () => ['10.0.0.5'],
+    lab: new LabPolicy(false, [LAB], { allowPrivateTargets: true }), sender: vulnOrders,
+    fingerprintSecret: 'secret', resolveHost: () => ['10.0.0.5'], adminToken: 'adm',
+    ownership: { resolveTxt: async () => [] }, // no TXT record in the lab => automatic proof fails
   });
   const f = app.getHttpAdapter().getInstance();
   const post = (url: string, payload: unknown) => f.inject({ method: 'POST', url, payload: payload as any });
@@ -59,9 +60,17 @@ async function main() {
   const early = await post('/scans', { engagementId: 'E1', grantId: 'g1', flows, identities, actor: 'admin' });
   check('scan blocked before activation (403)', early.statusCode === 403, `got ${early.statusCode}`);
 
-  await post('/grants/g1/ownership', { actor: 'system' });
+  const postAdmin = (url: string, payload: unknown) => f.inject({ method: 'POST', url, payload: payload as any, headers: { 'x-admin-token': 'adm' } });
+
+  const autoProof = JSON.parse((await post('/grants/g1/ownership', { actor: 'system' })).payload);
+  check('automatic ownership proof fails without a TXT record', autoProof.ownershipVerified === false && autoProof.verification?.ok === false, JSON.stringify(autoProof));
+  const noToken = await post('/grants/g1/ownership/manual', { actor: 'admin' });
+  check('manual ownership without admin token is 403', noToken.statusCode === 403, `got ${noToken.statusCode}`);
+  const badApprove = await post('/grants/g1/approve', { actor: 'admin' });
+  check('approve without admin token is 403', badApprove.statusCode === 403, `got ${badApprove.statusCode}`);
+  await postAdmin('/grants/g1/ownership/manual', { actor: 'admin' });
   await post('/grants/g1/owner-sign', { link: ownerLink, actor: 'owner@lab.sa' });
-  const approved = JSON.parse((await post('/grants/g1/approve', { actor: 'admin' })).payload);
+  const approved = JSON.parse((await postAdmin('/grants/g1/approve', { actor: 'admin' })).payload);
   check('grant active after lifecycle', approved.status === 'active', JSON.stringify(approved));
 
   await post('/engagements', { engagement });
@@ -71,6 +80,13 @@ async function main() {
 
   const report = JSON.parse((await get(`/scans/${scan.id}/report?lang=ar`)).payload);
   check('bilingual report renders', typeof report.markdown === 'string' && report.markdown.includes('تقرير تقييم أمني'));
+
+  const badEng = await post('/engagements', { engagement: { id: 'E2' } });
+  check('malformed engagement rejected (400)', badEng.statusCode === 400, `got ${badEng.statusCode}`);
+  const badScan = await post('/scans', { engagementId: 'E1', grantId: 'g1', flows: [{ method: 'GET', url: 'not a url' }], identities, actor: 'admin' });
+  check('malformed flow rejected (400)', badScan.statusCode === 400, `got ${badScan.statusCode}`);
+  const missing = await get('/scans/nope');
+  check('unknown scan is 404', missing.statusCode === 404, `got ${missing.statusCode}`);
 
   const auditEntries = JSON.parse((await get('/grants/g1/audit')).payload);
   check('audit trail recorded scan_run', auditEntries.some((e: any) => e.action === 'scan_run'));

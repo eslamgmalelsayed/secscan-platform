@@ -2,16 +2,30 @@
  * The §3.2 lock. Until the legal questions in §13 are resolved, the platform
  * is restricted to an internal lab allow-list; any other target is rejected.
  * This is a hard gate, not configuration a scan can override.
+ *
+ * Private-address blocking is a SEPARATE decision (review 2.4): a lab target
+ * may legitimately live on a private network, but that is opted into
+ * explicitly per deployment, never implied by the legal flag.
  */
+export interface LabPolicyOptions {
+  /** Permit targets that resolve to private/reserved addresses (local lab). Default false. */
+  allowPrivateTargets?: boolean;
+}
+
 export class LabPolicy {
+  private allow: Set<string>;
+  private readonly allowPrivate: boolean;
+
   constructor(
     /** Flip to true ONLY once §13 legal work is signed off. */
     public readonly legalResolved: boolean,
     /** Exact hostnames permitted while legalResolved is false. */
-    private readonly labAllowList: string[] = [],
-  ) {}
-
-  private allow = new Set(this.labAllowList.map((h) => h.toLowerCase()));
+    labAllowList: string[] = [],
+    opts: LabPolicyOptions = {},
+  ) {
+    this.allow = new Set(labAllowList.map((h) => h.toLowerCase()));
+    this.allowPrivate = opts.allowPrivateTargets ?? false;
+  }
 
   isTargetAllowed(host: string): boolean {
     if (this.legalResolved) return true;
@@ -26,9 +40,9 @@ export class LabPolicy {
     }
   }
 
-  /** In lab mode, targets are internal, so private addresses are expected. */
+  /** Whether the scope guard must refuse private/reserved addresses. */
   get blockPrivateAddresses(): boolean {
-    return this.legalResolved;
+    return !this.allowPrivate;
   }
 }
 

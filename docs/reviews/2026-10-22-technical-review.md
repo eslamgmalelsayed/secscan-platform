@@ -54,6 +54,8 @@
 
 ### 2.3 سلسلة التفويض كلها honor-system
 
+> **الحالة: جزئيًا (2026-10-22)** — إثبات الملكية الآلي الفعلي (`engine/ownership.ts`: DNS TXT / well-known / meta)، والتجاوز اليدوي + الموافقة + الإلغاء تتطلب `x-admin-token` (`SECSCAN_ADMIN_TOKEN`)، ولا سرّ بصمة افتراضي. **المتبقي:** OTP/إيميل للمالك، ومصادقة كاملة للـ API.
+
 - `actor` يأتي من جسم الطلب (`actorOf(body)`)؛ `adminApprove` لا يتحقق أن الفاعل أدمن.
 - `recordOwnershipVerified` يقلب علمًا فقط؛ لا يوجد كود يتحقق من DNS TXT / http token / meta tag رغم أن `OwnershipProof` enum موجود.
 - `ownerSign` يقبل أي كائن فيه `role: 'system_owner'` بلا OTP ولا إيميل ولا حتى `AuthorizationChainLink.parse`.
@@ -62,6 +64,8 @@
 **للتشغيل المحلي** ده مقبول مؤقتًا بشرط: اربط على `127.0.0.1`، وسمِّ الوضع صراحة `SECSCAN_DEV_TRUST=true` بحيث يرفض الـ API الإقلاع بدونه حتى لا ينسى أحد إن البوابة مفتوحة. **قبل أي عميل:** تنفيذ تحقق الملكية الفعلي (DNS TXT سهل: `dns.resolveTxt`)، ومصادقة أدمن، وOTP للمالك.
 
 ### 2.4 حارس SSRF/DNS-rebinding غير مُفعَّل وغير قابل للتفعيل
+
+> **الحالة: تم الإصلاح (2026-10-22)** — `ScopeGuard.check` غير متزامن، يحلّ الاسم مرة واحدة لكل فحص، ويمرّر العنوان للـ sender الذي يثبّت الاتصال عليه عبر undici؛ العلم مستقل عن `legalResolved` (`SECSCAN_ALLOW_PRIVATE_TARGETS`).
 
 - `main.ts` لا يمرّر `resolveHost` → `pointsAtPrivateSpace` يرجع `false` دائمًا.
 - واجهة `HostResolver` **متزامنة** (`(host) => string[]`) بينما DNS في Node غير متزامن؛ لا يمكن تنفيذها فعليًا.
@@ -91,12 +95,12 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 | الملف | الخطأ | الأثر |
 |---|---|---|
 | `engine/src/scanner.ts:60` | `String(e).startsWith('deny_')` — لكن `String(Error)` = `"ScopeRefused: deny_…"` فالشرط لا يصدق أبدًا | كل رفض نطاق يتكرر في `errors[]` (تحققت: `errors=1, notTested=1`) — **أُصلح** |
-| `engine/src/classifier.ts` | مطابقة substring على **URL كامل** بما فيه الـ query | `/presets` و`?remove_filter=0` → `state_changing` → تُرفض GETs آمنة؛ بينما `GET /approve?id=1` تمر كـ safe |
-| `checks/src/active.ts` | العلامة `sxz…` حروف وأرقام فقط | لا يمكن التمييز بين منعكس **مُرمَّز** وغير مُرمَّز؛ العنوان «بدون ترميز» غير دقيق. استخدم علامة تحوي `<>"'` وافحص بقاءها خامًا |
+| `engine/src/classifier.ts` | مطابقة substring على **URL كامل** بما فيه الـ query — **أُصلح** (كلمات كاملة في المسار وقيم action) | `/presets` و`?remove_filter=0` → `state_changing` → تُرفض GETs آمنة؛ بينما `GET /approve?id=1` تمر كـ safe |
+| `checks/src/active.ts` | العلامة `sxz…` حروف وأرقام فقط — **أُصلح** (تُبلَّغ فقط حين تعود `<"'>` خامًا) | لا يمكن التمييز بين منعكس **مُرمَّز** وغير مُرمَّز؛ العنوان «بدون ترميز» غير دقيق. استخدم علامة تحوي `<>"'` وافحص بقاءها خامًا |
 | `checks/src/active.ts` | SQLi بسياق نصي فقط (`'…'`)، ويعيد إرسال baseline لكل param | لا كشف للسياق الرقمي؛ طلبات زائدة |
-| `api/src/http/controllers.ts` | `Engagement` و`flows` و`identities` و`link` تُحفَظ بلا `parse` | بيانات فاسدة تنفجر لاحقًا كـ 400 بمعنى غامض |
-| `api/src/http/errors.filter.ts` | كل `Error` غير معروف → 400 بنص الرسالة الخام | يخفي 500 حقيقية ويسرّب تفاصيل داخلية |
-| `prisma/schema.prisma` | `Finding.type` غير موجود في zod، و`cvss`/`retests` غير موجودة في Prisma | انحراف مخطط سيظهر عند أول adapter |
+| `api/src/http/controllers.ts` | `Engagement` و`flows` و`identities` و`link` تُحفَظ بلا `parse` — **أُصلح** | بيانات فاسدة تنفجر لاحقًا كـ 400 بمعنى غامض |
+| `api/src/http/errors.filter.ts` | كل `Error` غير معروف → 400 بنص الرسالة الخام — **أُصلح** (500 عام + log) | يخفي 500 حقيقية ويسرّب تفاصيل داخلية |
+| `prisma/schema.prisma` | `Finding.type` غير موجود في zod، و`cvss`/`retests` غير موجودة في Prisma — **أُصلح** (المخطط فقط؛ لا adapter بعد) | انحراف مخطط سيظهر عند أول adapter |
 
 ## 3. تشغيل محلي — ما وجدته فعليًا
 
@@ -117,6 +121,8 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
 - Node 24.17 / npm 11 / Docker 29 متوفرون؛ `docker-compose.yml` سليم لكن **لا شيء يستخدمه** بعد (لا Prisma adapter ولا BullMQ adapter).
 
 ### 3.3 التبعيات
+
+> **الحالة: تم (2026-10-22)** — NestJS 12 + vitest 5؛ `npm audit`: 0 ثغرات.
 `npm audit`: 10 ثغرات (3 critical) في `@nestjs/platform-fastify@10` / `fastify` / `@fastify/middie` / `vitest@3`. بما أن المواصفة تعتبر المنصة نفسها «هدفًا عالي القيمة» (§3.6)، الترقية لـ NestJS 12 / vitest 5 مطلوبة قبل أي تعريض للشبكة. محليًا غير حرجة.
 
 ### 3.4 ملاحظة على الـ working tree
@@ -137,7 +143,7 @@ CORS/open-redirect/SQLi/reflection تُرسَل بلا جلسة. أي endpoint �
    يولّد grant + ownership + sign + approve داخليًا تحت علم `--dev-trust` (يطبع تحذيرًا صريحًا)، يملأ `SecretStore` من الملف، يستدعي `verifyAll`، ثم `ScanService.run`، ثم يكتب التقرير بالعربية والإنجليزية. ده يحوّل الدورة من «ساعة إعداد» إلى «أمر واحد».
 3. **أصلح 2.5 و2.6** حتى تظهر النتائج خلف تسجيل الدخول وتظهر الفجوات بدل الصمت.
 4. **حد معدّل بسيط + مهلة إجمالية** (§8): **تم** — `engine/pacing.ts` (`pacedSender`: rps + deadline + AbortSignal)، والماسح يوقف نظيفًا ويذكر ذلك في `notTested`.
-5. **معمل محلي بثغرات مقصودة** (مثلًا OWASP Juice Shop أو crAPI في Docker) كـ benchmark ثابت لقياس precision/recall — مطلوب أصلًا في §12.
+5. **معمل محلي بثغرات مقصودة** — **تم كـ benchmark داخلي**: `api/test/benchmark.test.ts` (5 ضعف معروف + 3 نقاط سليمة، دقة واسترجاع 100% مطلوبة). (مثلًا OWASP Juice Shop أو crAPI في Docker) كـ benchmark ثابت لقياس precision/recall — مطلوب أصلًا في §12.
 6. بعدها فقط: Prisma adapter (حتى تُعاد الفحوصات وتُقارن عبر الزمن)، ثم BullMQ، ثم الواجهة.
 
 ## 5. ملاحظات أصغر (تحسينات)

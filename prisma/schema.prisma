@@ -29,6 +29,7 @@ model Grant {
   ownershipProof    String
   ownershipToken    String
   ownershipVerified Boolean       @default(false)
+  ownershipMethod   String?       // "automatic" | "manual" (how ownershipVerified was set)
   adminApproved     Boolean       @default(false)
   status            GrantStatus   @default(pending_owner)
   notBefore         DateTime
@@ -90,12 +91,17 @@ model Scan {
   createdAt    DateTime   @default(now())
 }
 
+// Mirrors @secscan/shared Finding (zod). `id` is deterministic per scan+finding,
+// so the primary key is the pair. `reviewQueue` marks findings kept for human
+// review (ScanRecord.review) rather than the client report.
 model Finding {
-  id            String  @id
+  id            String
   scan          Scan    @relation(fields: [scanId], references: [id])
   scanId        String
-  type          String
+  reviewQueue   Boolean @default(false)
   severity      String
+  cvssScore     Float?
+  cvssVector    String?
   confidence    String // confirmed | likely | needs_review
   status        String  @default("open")
   asset         String
@@ -110,8 +116,11 @@ model Finding {
   remediationEn String
   evidence      Json
   controls      Json
+  retests       Json    @default("[]")
   source        String
   firstSeen     DateTime
+
+  @@id([scanId, id])
 }
 
 // Append-only: the application never issues UPDATE/DELETE on this table.

@@ -15,7 +15,7 @@ function server(): Promise<{ srv: Server; base: string }> {
     const p = u.pathname;
     if (p === '/') {
       res.setHeader('Server', 'nginx/1.18.0');
-      res.setHeader('Set-Cookie', 'sid=abc'); // no flags
+      res.setHeader('Set-Cookie', ['sid=abc', 'pref=1; HttpOnly', 'ok=1; HttpOnly; SameSite=Lax']); // two weak, one fine
       res.writeHead(200, { 'content-type': 'text/html' });
       return res.end('<html>key AKIAABCDEFGHIJKLMNOP home</html>'); // no sec headers; secret
     }
@@ -27,6 +27,11 @@ function server(): Promise<{ srv: Server; base: string }> {
     if (p === '/search') {
       res.writeHead(200, { 'content-type': 'text/html' });
       return res.end(`<html>results for ${u.searchParams.get('q') ?? ''}</html>`);
+    }
+    if (p === '/safe-search') { // reflects, but correctly encoded -> must NOT be a finding
+      const enc = (u.searchParams.get('q') ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      return res.end(`<html>results for ${enc}</html>`);
     }
     if (p === '/item') {
       const id = u.searchParams.get('id') ?? '1';
@@ -79,6 +84,7 @@ async function ctxFor(base: string): Promise<CheckContext> {
   const flows: RecordedRequest[] = [
     { method: 'GET', url: `${base}/private/search?q=hello`, capturedAsRole: 'customer', capturedAsTenant: 't1' },
     { method: 'GET', url: `${base}/search?q=hello` },
+    { method: 'GET', url: `${base}/safe-search?q=hello` },
     { method: 'GET', url: `${base}/item?id=1` },
     { method: 'GET', url: `${base}/go?next=/dash` },
     { method: 'GET', url: `${base}/api` },
@@ -92,15 +98,25 @@ describe('checks suite (live local server)', () => {
     try {
       const r = await runChecks(await ctxFor(base));
       const cats = new Set([...r.reportReady, ...r.needsReview].map((f) => categoryOf(f.id)));
-      for (const c of ['security_header', 'insecure_cookie', 'tls', 'info_disclosure', 'secret_exposure', 'cors', 'open_redirect', 'injection', 'xss', 'jwt']) {
+      for (const c of ['security_header', 'insecure_cookie', 'info_disclosure', 'secret_exposure', 'cors', 'open_redirect', 'injection', 'xss', 'jwt']) {
         expect(cats.has(c), `expected ${c} (got ${[...cats].join(',')})`).toBe(true);
       }
+      // plain-http lab root: no HSTS / https-redirect noise
+      expect(cats.has('tls')).toBe(false);
+      expect(r.reportReady.some((f) => f.title.en.includes('strict-transport-security'))).toBe(false);
+      // one finding per weak cookie; the well-flagged one is not reported; Secure not demanded over http
+      const cookieFindings = r.reportReady.filter((f) => f.id.startsWith('CHK-insecure_cookie'));
+      expect(cookieFindings.map((f) => f.title.en).sort()).toEqual([
+        "Cookie 'pref' missing flags: SameSite", "Cookie 'sid' missing flags: HttpOnly, SameSite",
+      ]);
       // boolean SQLi is confirmed -> report-ready
       expect(r.reportReady.some((f) => f.title.en.includes('Boolean-based SQL injection'))).toBe(true);
       // reflected XSS is needs_review, never auto-reported
       expect(r.needsReview.some((f) => f.title.en.includes('reflected unescaped'))).toBe(true);
       // the probe behind login ran as the captured identity (review 2.5)
       expect(r.needsReview.some((f) => f.location === 'GET /private/search')).toBe(true);
+      // an encoded reflection is correct behaviour, not a finding
+      expect([...r.reportReady, ...r.needsReview].some((f) => f.location === 'GET /safe-search')).toBe(false);
       expect(r.reportReady.some((f) => f.title.en.includes('reflected unescaped'))).toBe(false);
       // every finding carries a CVSS score and multi-framework controls
       for (const f of [...r.reportReady, ...r.needsReview]) {

@@ -4,7 +4,10 @@
  * (c) admin-approved, and (d) live. Every transition is written to the
  * append-only audit log.
  */
-import { AuthorizationGrant, type AuthorizationChainLink, isLive } from '@secscan/engine';
+import {
+  AuthorizationGrant, AuthorizationChainLink, isLive, verifyOwnership,
+  type OwnershipDeps, type OwnershipResult,
+} from '@secscan/engine';
 import { AppendOnlyAuditLog } from './audit';
 import type { GrantRecord, GrantRepo } from './repositories';
 
@@ -24,16 +27,36 @@ export class AuthorizationService {
     return rec;
   }
 
+  /** Automatic proof (§3.1): flips the flag only when every target passes. A
+   *  failure is audited too, so repeated attempts are visible. */
+  async verifyOwnership(grantId: string, actor: string, deps?: OwnershipDeps): Promise<GrantRecord & { verification: OwnershipResult }> {
+    const rec = this.require(grantId);
+    const verification = await verifyOwnership(rec.grant, deps);
+    if (verification.ok) {
+      rec.ownershipVerified = true;
+      this.grants.save(rec);
+    }
+    this.audit.append({
+      actor, action: verification.ok ? 'ownership_verified' : 'ownership_verification_failed',
+      grantId, detail: `${rec.grant.ownershipProof}: ${verification.detail.join('; ')}`,
+    });
+    return { ...rec, verification };
+  }
+
+  /** Manual override for lab targets that cannot host a proof. Admin-only at
+   *  the HTTP layer; audited under its own action so it is never mistaken
+   *  for an automatic verification. */
   recordOwnershipVerified(grantId: string, actor: string): GrantRecord {
     const rec = this.require(grantId);
     rec.ownershipVerified = true;
     this.grants.save(rec);
-    this.audit.append({ actor, action: 'ownership_verified', grantId, detail: rec.grant.ownershipProof });
+    this.audit.append({ actor, action: 'ownership_recorded_manually', grantId, detail: rec.grant.ownershipProof });
     return rec;
   }
 
-  ownerSign(grantId: string, link: AuthorizationChainLink, actor: string): GrantRecord {
+  ownerSign(grantId: string, linkInput: unknown, actor: string): GrantRecord {
     const rec = this.require(grantId);
+    const link: AuthorizationChainLink = AuthorizationChainLink.parse(linkInput);
     if (link.role !== 'system_owner') throw new AuthorizationError('owner signature must have role system_owner');
     rec.grant = { ...rec.grant, chain: [...rec.grant.chain, link] };
     this.audit.append({ actor, action: 'owner_signed', grantId, detail: link.party });

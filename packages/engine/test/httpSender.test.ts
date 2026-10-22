@@ -34,6 +34,14 @@ describe('createHttpSender', () => {
     expect(h['authorization']).toBeUndefined();
   });
 
+  it('passes a pinned-address dispatcher to fetch so the connection cannot re-resolve', async () => {
+    let captured: any = null;
+    const fakeFetch = (async (_url: any, init: any) => { captured = init; return new Response('', { status: 204 }); }) as unknown as typeof fetch;
+    const sender = createHttpSender({ fetchImpl: fakeFetch });
+    await sender({ method: 'GET', url: 'https://app.example.com/' }, { role: 'anonymous' }, { pinnedAddress: '93.184.216.34' });
+    expect(captured.dispatcher).toBeDefined();
+  });
+
   it('transport error becomes status 0', async () => {
     const fakeFetch = (async () => { throw new Error('boom'); }) as unknown as typeof fetch;
     const sender = createHttpSender({ fetchImpl: fakeFetch });
