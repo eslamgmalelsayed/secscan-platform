@@ -71,8 +71,12 @@ const SQL_ERRORS = [
   'quoted string not properly terminated', 'sqlite3.operationalerror', 'pg::syntaxerror',
   'ora-00933', 'odbc sql server driver',
 ];
-const SQLI_TRUE = "' AND '1'='1";
-const SQLI_FALSE = "' AND '1'='2";
+// Read-only boolean differentials for two injection contexts: inside a quoted
+// string, and a bare numeric parameter. Both are non-destructive reads.
+const SQLI_CONTEXTS: { context: string; t: string; f: string }[] = [
+  { context: 'string', t: "' AND '1'='1", f: "' AND '1'='2" },
+  { context: 'numeric', t: ' AND 1=1', f: ' AND 1=2' },
+];
 
 /** SQL injection — read-only differential + error signatures. Reproduced
  *  boolean difference => confirmed; an error signature => likely (review). */
@@ -104,30 +108,36 @@ export async function sqliDifferential(ctx: CheckContext): Promise<Finding[]> {
         continue;
       }
 
-      // boolean-based, reproduced twice
-      let matches = 0;
-      for (let i = 0; i < 2; i++) {
-        const tResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + SQLI_TRUE) }, as);
-        const fResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + SQLI_FALSE) }, as);
-        if (!tResp || !fResp) break;
-        if (digest(tResp) === baseDigest && digest(fResp) !== baseDigest) matches++;
-        else break;
-      }
-      if (matches === 2) {
-        out.push(build({
-          category: 'injection', severity: 'critical', confidence: 'confirmed',
-          title: t(`حقن SQL منطقي (boolean) في '${name}'`, `Boolean-based SQL injection in '${name}'`),
-          description: t('شرط TRUE أعاد استجابة الأساس وFALSE غيّرها، وتكرر — البارامتر يُفسَّر كـ SQL.', 'A TRUE condition returned the baseline and FALSE changed it, reproducibly — the parameter is interpreted as SQL.'),
-          impact: t('قراءة/تعديل بيانات قاعدة البيانات.', 'Read/modify database data.'),
-          remediation: t('استخدم استعلامات مُعاملة، وتحقق من المدخلات، وأقل صلاحية لحساب القاعدة.', 'Use parameterized queries, validate input, least-privilege the DB account.'),
-          asset: new URL(flow.url).host, location: `${flow.method} ${new URL(flow.url).pathname}`,
-          evidence: [
-            { kind: 'note', label: 'true-condition', content: 'matched baseline (reproduced x2)' },
-            { kind: 'note', label: 'false-condition', content: 'diverged from baseline (reproduced x2)' },
-          ],
-          cvss: { AV: 'N', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'H', A: 'L' },
-          idSeed: `${flow.url}|sqli-bool|${name}`,
-        }, ctx.grantFingerprint));
+      // boolean-based, each context reproduced twice; stop at the first that confirms
+      for (const ctxPair of SQLI_CONTEXTS) {
+        // a numeric-context probe only makes sense when the value is numeric
+        if (ctxPair.context === 'numeric' && !/^\d+$/.test(baseVal)) continue;
+        let matches = 0;
+        for (let i = 0; i < 2; i++) {
+          const tResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + ctxPair.t) }, as);
+          const fResp = await safeSend(ctx, { ...flow, url: withParam(flow.url, name, baseVal + ctxPair.f) }, as);
+          if (!tResp || !fResp) break;
+          if (digest(tResp) === baseDigest && digest(fResp) !== baseDigest) matches++;
+          else break;
+        }
+        if (matches === 2) {
+          out.push(build({
+            category: 'injection', severity: 'critical', confidence: 'confirmed',
+            title: t(`حقن SQL منطقي (boolean, ${ctxPair.context}) في '${name}'`, `Boolean-based SQL injection (${ctxPair.context} context) in '${name}'`),
+            description: t('شرط TRUE أعاد استجابة الأساس وFALSE غيّرها، وتكرر — البارامتر يُفسَّر كـ SQL.', 'A TRUE condition returned the baseline and FALSE changed it, reproducibly — the parameter is interpreted as SQL.'),
+            impact: t('قراءة/تعديل بيانات قاعدة البيانات.', 'Read/modify database data.'),
+            remediation: t('استخدم استعلامات مُعاملة، وتحقق من المدخلات، وأقل صلاحية لحساب القاعدة.', 'Use parameterized queries, validate input, least-privilege the DB account.'),
+            asset: new URL(flow.url).host, location: `${flow.method} ${new URL(flow.url).pathname}`,
+            evidence: [
+              { kind: 'note', label: 'context', content: ctxPair.context },
+              { kind: 'note', label: 'true-condition', content: 'matched baseline (reproduced x2)' },
+              { kind: 'note', label: 'false-condition', content: 'diverged from baseline (reproduced x2)' },
+            ],
+            cvss: { AV: 'N', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'H', A: 'L' },
+            idSeed: `${flow.url}|sqli-bool|${name}`,
+          }, ctx.grantFingerprint));
+          break;
+        }
       }
     }
   }

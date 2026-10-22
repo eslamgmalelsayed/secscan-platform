@@ -149,24 +149,54 @@ const SECRET_PATTERNS: [RegExp, string][] = [
   [/(?:secret|api[_-]?key|token)["']?\s*[:=]\s*["'][A-Za-z0-9_\-]{16,}["']/i, 'inline secret assignment'],
 ];
 
-export async function secretsInResponse(ctx: CheckContext): Promise<Finding[]> {
-  const resp = await fetchRoot(ctx);
-  if (!resp) return [];
+/** Same-origin <script src> URLs on the root page, resolved and capped. */
+function sameOriginScripts(html: string, rootUrl: string, max = 10): string[] {
+  const origin = new URL(rootUrl).origin;
+  const urls: string[] = [];
+  const re = /<script[^>]+src\s*=\s*["']([^"']+)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) && urls.length < max) {
+    try {
+      const u = new URL(m[1], rootUrl);
+      if (u.origin === origin && !urls.includes(u.toString())) urls.push(u.toString());
+    } catch { /* skip malformed src */ }
+  }
+  return urls;
+}
+
+function scanForSecrets(ctx: CheckContext, body: string, source: string): Finding[] {
   const out: Finding[] = [];
   for (const [re, label] of SECRET_PATTERNS) {
-    if (re.test(resp.body)) {
+    if (re.test(body)) {
       out.push(build({
         category: 'secret_exposure', severity: 'high', confidence: 'likely',
         title: t(`سر محتمل مكشوف: ${label}`, `Possible exposed secret: ${label}`),
-        description: t('نمط يشبه سرًا ظهر في محتوى يصل للعميل (قد يكون في bundle/JS).', 'A secret-like pattern appeared in client-delivered content (possibly a JS bundle).'),
+        description: t(`نمط يشبه سرًا ظهر في محتوى يصل للعميل (${source}).`, `A secret-like pattern appeared in client-delivered content (${source}).`),
         impact: t('تسريب مفتاح/سر قد يُستغل مباشرة.', 'Leaked key/secret that may be directly abused.'),
         remediation: t('أزِل السر من الكود العميل، دوّر المفتاح، وانقله للخادم.', 'Remove the secret from client code, rotate it, move it server-side.'),
-        asset: new URL(ctx.rootUrl).host,
-        evidence: [{ kind: 'response', label: 'pattern', content: label }],
+        asset: new URL(ctx.rootUrl).host, location: source,
+        evidence: [{ kind: 'response', label: 'pattern', content: `${label} in ${source}` }],
         cvss: { AV: 'N', AC: 'L', PR: 'N', UI: 'N', S: 'U', C: 'H', I: 'N', A: 'N' },
-        idSeed: `${ctx.rootUrl}|secret|${label}`,
+        idSeed: `${source}|secret|${label}`,
       }, ctx.grantFingerprint));
     }
   }
   return out;
+}
+
+export async function secretsInResponse(ctx: CheckContext): Promise<Finding[]> {
+  const resp = await fetchRoot(ctx);
+  if (!resp) return [];
+  const out: Finding[] = scanForSecrets(ctx, resp.body, 'root document');
+  // Follow same-origin <script src> bundles — that is where keys usually hide.
+  const ct = (header(resp, 'content-type') ?? '').toLowerCase();
+  if (ct.includes('html')) {
+    for (const src of sameOriginScripts(resp.body, ctx.rootUrl)) {
+      const js = await safeSend(ctx, { method: 'GET', url: src });
+      if (js && js.body) out.push(...scanForSecrets(ctx, js.body, src.replace(new URL(ctx.rootUrl).origin, '')));
+    }
+  }
+  // de-dup by finding id (same secret label from the same source)
+  const seen = new Set<string>();
+  return out.filter((f) => (seen.has(f.id) ? false : (seen.add(f.id), true)));
 }
