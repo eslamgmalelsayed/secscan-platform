@@ -35,6 +35,18 @@ async function main() {
     warn('SECSCAN_FINGERPRINT_SECRET not set; using a random per-boot secret (fingerprints and pending owner codes will not survive a restart)');
   }
 
+  // Dev-trust local mode: enables POST /scans/quick (paste a URL, auto-grant +
+  // crawl + scan), with no auth and the §3.2 lab lock bypassed for the pasted
+  // host. For a tester on their own machine only — refuse a non-loopback bind.
+  const devTrust = process.env.SECSCAN_DEV_TRUST === 'true';
+  const bindAddr = process.env.SECSCAN_BIND ?? '127.0.0.1';
+  if (devTrust) {
+    if (bindAddr !== '127.0.0.1' && bindAddr !== 'localhost' && bindAddr !== '::1') {
+      throw new Error(`SECSCAN_DEV_TRUST=true refuses to bind to ${bindAddr}: it disables the authorization gate, so it must stay on loopback (unset SECSCAN_BIND or set it to 127.0.0.1)`);
+    }
+    warn('DEV-TRUST MODE: quick scans auto-authorize any URL you paste and the lab lock is OFF. Loopback only; never expose this.');
+  }
+
   const adminToken = process.env.SECSCAN_ADMIN_TOKEN;
   if (!adminToken) warn('SECSCAN_ADMIN_TOKEN not set; approve/revoke/manual overrides are OPEN (local dev only)');
   const auth = parseApiTokens(process.env.SECSCAN_API_TOKENS);
@@ -69,9 +81,10 @@ async function main() {
     stores: db?.stores,
     scanQueue,
     stopSignal,
+    devTrust,
   });
   const port = Number(process.env.PORT ?? 3001);
-  const bind = process.env.SECSCAN_BIND ?? '127.0.0.1';
+  const bind = bindAddr;
   await app.listen(port, bind);
 
   const shutdown = async () => { await app.close(); await db?.close(); process.exit(0); };

@@ -48,4 +48,26 @@ describe('runScan (one-command, injected sender)', () => {
     // must NOT appear (passive scorecard findings on the root are fine).
     expect(res.reportEn).not.toContain('object-level authorization');
   });
+
+  it('quick mode: discovers endpoints from a URL alone (no flows supplied)', async () => {
+    // a small site whose home page links to two more pages; the open redirect
+    // on /go is a confirmable, non-destructive finding reachable by crawling.
+    const html = (body: string): RecordedResponse => ({ status: 200, headers: { 'content-type': 'text/html' }, body });
+    const site: Sender = async (req: RecordedRequest) => {
+      const u = new URL(req.url); const p = u.pathname;
+      if (p === '/') return html('<a href="/about">a</a> <a href="/go?next=x">g</a>');
+      if (p === '/about') return html('about');
+      if (p === '/go') return { status: 302, headers: { location: u.searchParams.get('next') ?? '/' }, body: '' };
+      return json(404, '{}');
+    };
+    const res = await runScan(
+      { host: HOST, root: `https://${HOST}/`, flows: [], discover: { maxPages: 10 }, allowPrivate: true },
+      { sender: site, fingerprintSecret: 'test-secret' },
+    );
+    expect(res.status).toBe('done');
+    // crawling reached /go and the non-destructive open-redirect check fired
+    expect(res.reportEn).toContain('Open redirect');
+    // and it records that it discovered endpoints
+    expect(res.notTested.some((n) => n.includes('discovered'))).toBe(true);
+  });
 });

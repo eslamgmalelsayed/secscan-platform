@@ -15,7 +15,7 @@
  * stop signal (review gap 3) is polled so an operator can halt a running scan.
  */
 import {
-  GuardedClient, ScanStopped, ScopeGuard, fingerprint as grantFingerprint, pacedSender, runAccessControlScan,
+  GuardedClient, ScanStopped, ScopeGuard, discoverFlows, fingerprint as grantFingerprint, pacedSender, runAccessControlScan,
   type HostResolver, type Identity, type PacingOptions, type RecordedRequest, type Sender,
 } from '@secscan/engine';
 import { runChecks } from '@secscan/checks';
@@ -39,6 +39,11 @@ export interface ScanRequest {
   tokens?: string[];
   skipChecks?: boolean;
   signal?: AbortSignal;
+  /** When set and `flows` is empty, the scan crawls the public surface from
+   *  `rootUrl` (or the grant's first target) to discover GET endpoints itself —
+   *  the one-URL path. Discovered flows are anonymous; the IDOR engine still
+   *  needs identities. */
+  discover?: { maxPages?: number; maxFlows?: number };
 }
 
 /** Job placed on the queue. Carries identity KEYS only — never secrets, which
@@ -52,6 +57,7 @@ export interface QueuedScan {
   rootUrl?: string;
   skipChecks?: boolean;
   actor: string;
+  discover?: { maxPages?: number; maxFlows?: number };
 }
 
 export interface ScanQueue {
@@ -84,10 +90,14 @@ export class ScanService {
   }
 
   /** Validate everything that should reject the request synchronously. */
-  private async preflight(req: { engagementId: string; grantId: string; flows: RecordedRequest[] }) {
+  private async preflight(req: { engagementId: string; grantId: string; flows: RecordedRequest[]; discover?: unknown; rootUrl?: string }) {
     const rec = await this.d.auth.assertScanAllowed(req.grantId);
     for (const t of rec.grant.targets) this.d.lab.assertTargetAllowed(t.host);
     for (const f of req.flows) this.d.lab.assertTargetAllowed(new URL(f.url).hostname);
+    if (req.rootUrl) this.d.lab.assertTargetAllowed(new URL(req.rootUrl).hostname);
+    if (!req.flows.length && !req.discover) {
+      throw new ScanPreconditionError('no flows supplied and discovery is off: import flows or enable discover');
+    }
     if (!(await this.d.engagements.get(req.engagementId))) {
       throw new ScanPreconditionError(`engagement ${req.engagementId} not found`);
     }
@@ -107,6 +117,7 @@ export class ScanService {
     await this.d.scanQueue.add({
       scanId: id, engagementId: req.engagementId, grantId: req.grantId, flows: req.flows,
       identities: req.identities, rootUrl: req.rootUrl, skipChecks: req.skipChecks, actor: req.actor,
+      discover: req.discover,
     });
     await this.d.audit.append({ actor: req.actor, action: 'scan_queued', grantId: req.grantId, detail: id });
     return queued;
@@ -139,8 +150,21 @@ export class ScanService {
     let stopped = false;
 
     try {
+      // One-URL path: when no flows were supplied, crawl the public surface from
+      // the root through this same scope-guarded, paced client. Discovered flows
+      // are anonymous (scorecard + active checks); the IDOR engine still needs
+      // identities, so a discovered scan with no identities finds no authz issues.
+      const discoverNotes: string[] = [];
+      let flows = req.flows;
+      const rootForCrawl = req.rootUrl ?? `${rec.grant.targets[0].scheme}://${rec.grant.targets[0].host}/`;
+      if (!flows.length && req.discover) {
+        flows = await discoverFlows(client, rootForCrawl, { maxPages: req.discover.maxPages, maxFlows: req.discover.maxFlows });
+        discoverNotes.push(`discovered ${flows.length} endpoint(s) by crawling ${rootForCrawl}`);
+        if (!req.identities.length) discoverNotes.push('crawl ran anonymously: object-level (IDOR/cross-tenant) checks need test identities and were not run');
+      }
+
       // §7: verify sessions that have a liveness probe; drop and report dead ones.
-      const skipped: string[] = [];
+      const skipped: string[] = [...discoverNotes];
       const identities: Identity[] = [];
       for (const ident of req.identities) {
         const url = ident.sessionRef ? this.d.liveness?.[ident.sessionRef] : undefined;
@@ -153,7 +177,7 @@ export class ScanService {
 
       let result;
       try {
-        result = await runAccessControlScan({ client, grantFingerprint: fp, flows: req.flows, identities });
+        result = await runAccessControlScan({ client, grantFingerprint: fp, flows, identities });
       } catch (e) {
         if (e instanceof ScanStopped) { stopped = true; result = { reportReady: [], needsReview: [], notTested: [`stopped: ${e.reason} during access-control run`] }; }
         else throw e;
@@ -168,7 +192,7 @@ export class ScanService {
       if (!req.skipChecks && !stopped) {
         const first = rec.grant.targets[0];
         const rootUrl = req.rootUrl ?? `${first.scheme}://${first.host}/`;
-        const checks = await runChecks({ client, grantFingerprint: fp, rootUrl, flows: req.flows, tokens: req.tokens, identities });
+        const checks = await runChecks({ client, grantFingerprint: fp, rootUrl, flows, tokens: req.tokens, identities });
         findings.push(...checks.reportReady);
         review.push(...checks.needsReview);
         checksReady = checks.reportReady.length;

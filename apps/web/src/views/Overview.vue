@@ -8,6 +8,8 @@ const emit = defineEmits<{ go: [view: 'overview' | 'grants' | 'scan' | 'results'
 
 const scans = ref<ScanSummary[]>([]);
 const identityCount = ref<number | null>(null);
+const quickUrl = ref('');
+const quickBusy = ref(false);
 
 async function load() {
   const s = await attempt(() => api.scans.list());
@@ -15,6 +17,14 @@ async function load() {
   try { identityCount.value = (await api.identities()).length; } catch { /* auth may be required */ }
 }
 onMounted(load);
+
+async function runQuick() {
+  if (!quickUrl.value.trim()) return;
+  quickBusy.value = true;
+  const scan = await attempt(() => api.scans.quick(quickUrl.value.trim()), 'quick scan done');
+  quickBusy.value = false;
+  if (scan) { quickUrl.value = ''; load(); emit('open-scan', scan.id); }
+}
 </script>
 
 <template>
@@ -43,6 +53,15 @@ onMounted(load);
       <div class="card stat">
         <span class="l">Scans</span>
         <span class="n">{{ scans.length }}</span>
+      </div>
+    </div>
+
+    <div v-if="health?.devTrust" class="card accent-border" style="margin-bottom: 16px">
+      <h3>Quick scan <span class="chip accent">dev-trust</span></h3>
+      <p class="sub">Paste a URL you own — SecScan crawls its public surface and runs the non-destructive suite in one step. Add test identities (<code>SECSCAN_IDENTITIES_FILE</code>) to cover logged-in pages and turn on the IDOR engine.</p>
+      <div class="row" style="gap: 8px; margin-top: 10px">
+        <input v-model="quickUrl" placeholder="https://localhost:3000/" style="flex: 1" @keyup.enter="runQuick" />
+        <button class="btn primary" :disabled="quickBusy || !quickUrl.trim()" @click="runQuick">{{ quickBusy ? 'Scanning…' : 'Scan' }}</button>
       </div>
     </div>
 

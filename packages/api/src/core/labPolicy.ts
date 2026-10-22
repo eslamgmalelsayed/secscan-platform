@@ -27,6 +27,13 @@ export class LabPolicy {
     this.allowPrivate = opts.allowPrivateTargets ?? false;
   }
 
+  /** Permit a host at runtime. Used ONLY by dev-trust quick scans, where a
+   *  local tester asserts ownership of the URL they paste; never reachable
+   *  without SECSCAN_DEV_TRUST. The lab lock stays closed for everything else. */
+  allowHost(host: string): void {
+    this.allow.add(host.toLowerCase());
+  }
+
   isTargetAllowed(host: string): boolean {
     if (this.legalResolved) return true;
     return this.allow.has(host.toLowerCase());

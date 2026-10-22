@@ -16,21 +16,27 @@ import { runScan } from './run';
 
 type Args = Record<string, string | boolean>;
 
-function parse(argv: string[]): { cmd: string; args: Args } {
+function parse(argv: string[]): { cmd: string; args: Args; positionals: string[] } {
   const cmd = argv[0] && !argv[0].startsWith('--') ? argv[0] : 'scan';
   const args: Args = {};
+  const positionals: string[] = [];
   for (let i = cmd === argv[0] ? 1 : 0; i < argv.length; i++) {
     const a = argv[i];
-    if (!a.startsWith('--')) continue;
+    if (!a.startsWith('--')) { positionals.push(a); continue; }
     const key = a.slice(2);
     const next = argv[i + 1];
     if (next === undefined || next.startsWith('--')) { args[key] = true; }
     else { args[key] = next; i++; }
   }
-  return { cmd, args };
+  return { cmd, args, positionals };
 }
 
-const USAGE = `secscan scan — authorized, non-destructive local scan
+const USAGE = `secscan — authorized, non-destructive local scanner
+
+  secscan quick <url>       one step: crawl the public surface and scan it
+                            (add --identities to cover logins + enable IDOR)
+
+secscan scan — scan from recorded flows
 
 Required:
   --host <host>           target host (also the only allow-listed target)
@@ -50,7 +56,8 @@ Optional:
   --rps <n>               requests/second cap     --max-ms <n>  whole-scan deadline`;
 
 async function main() {
-  const { cmd, args } = parse(process.argv.slice(2));
+  const { cmd, args, positionals } = parse(process.argv.slice(2));
+  if (cmd === 'quick') return quick(positionals[0] ?? (args.url as string), args);
   if (cmd === 'help' || args.help || (cmd !== 'scan')) { console.log(USAGE); process.exit(cmd === 'scan' || cmd === 'help' ? 0 : 1); }
 
   const host = args.host as string;
@@ -87,6 +94,35 @@ async function main() {
   console.log(`\n[secscan] ${res.status} — confirmed=${res.confirmed} review=${res.review} notTested=${res.notTested.length}`);
   if (res.notTested.length) console.log('  not tested:\n' + res.notTested.map((n) => `   - ${n}`).join('\n'));
   console.log(`\n[secscan] reports written: ${out}.ar.md, ${out}.en.md`);
+}
+
+/**
+ * One-step scan: `secscan quick <url>`. No HAR, no flags required — it crawls
+ * the public surface and runs the non-destructive suite. Add --identities to
+ * cover logged-in pages and enable the IDOR engine.
+ */
+async function quick(url: string, args: Args) {
+  if (!url) fail('usage: secscan quick <url> [--identities f.json] [--max-pages N] [--allow-private] [--out prefix]');
+  let host: string, root: string;
+  try { const u = new URL(url); host = u.hostname; root = url; } catch { return fail(`not a valid URL: ${url}`); }
+
+  const identitiesFile = args.identities ? JSON.parse(readFileSync(args.identities as string, 'utf-8')) : undefined;
+  const out = (args.out as string) || 'report';
+  const nIds = identitiesFile ? Object.keys(identitiesFile).length : 0;
+  console.log(`[secscan] quick scan of ${host} — crawling the public surface${nIds ? `, ${nIds} identit(y/ies)` : ' anonymously'}`);
+
+  const res = await runScan({
+    host, root, flows: [], discover: { maxPages: args['max-pages'] ? Number(args['max-pages']) : undefined },
+    identitiesFile, allowPrivate: !!args['allow-private'],
+    rps: args.rps ? Number(args.rps) : undefined, maxMs: args['max-ms'] ? Number(args['max-ms']) : undefined,
+    tokens: args.tokens ? String(args.tokens).split(',').map((t) => t.trim()).filter(Boolean) : undefined,
+  });
+  writeFileSync(`${out}.ar.md`, res.reportAr);
+  writeFileSync(`${out}.en.md`, res.reportEn);
+  console.log(`\n[secscan] ${res.status} — confirmed=${res.confirmed} review=${res.review} notTested=${res.notTested.length}`);
+  if (res.notTested.length) console.log('  not tested:\n' + res.notTested.map((n) => `   - ${n}`).join('\n'));
+  console.log(`\n[secscan] reports written: ${out}.ar.md, ${out}.en.md`);
+  if (!nIds) console.log('[secscan] tip: add --identities to test logged-in pages and turn on the IDOR/cross-tenant engine.');
 }
 
 function fail(msg: string): never {

@@ -36,6 +36,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 export interface Health {
   ok: boolean; legalResolved: boolean; adminTokenRequired: boolean;
   apiTokenRequired: boolean; ownerEmailSignOff: boolean; identities: number;
+  devTrust?: boolean;
 }
 
 export const api = {
@@ -69,6 +70,8 @@ export const api = {
     list: () => call<ScanSummary[]>('GET', '/scans'),
     get: (id: string) => call<ScanRecord>('GET', `/scans/${id}`),
     run: (body: unknown) => call<ScanSummary>('POST', '/scans', { ...(body as object), actor: settings.actor }),
+    // One-step scan from a URL (dev-trust local mode): auto-grants and crawls.
+    quick: (url: string, maxPages?: number) => call<ScanSummary & { grantId: string }>('POST', '/scans/quick', { url, maxPages, actor: settings.actor }),
     stop: (id: string) => call<{ id: string; stopping: boolean }>('POST', `/scans/${id}/stop`, { actor: settings.actor }),
     report: (id: string, lang: 'ar' | 'en') => call<{ markdown: string }>('GET', `/scans/${id}/report?lang=${lang}`),
     evidence: (id: string) => call<unknown>('GET', `/scans/${id}/evidence`),

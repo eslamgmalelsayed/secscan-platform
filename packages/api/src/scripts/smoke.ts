@@ -122,7 +122,32 @@ async function main() {
   check('audit actor comes from the token, not the request body', created?.actor === 'operator@lab', JSON.stringify(created));
   check('audit never stores the owner address in full', !JSON.stringify(auditEntries).includes('owner@lab.internal'));
 
+  // quick scan is refused unless dev-trust mode is on (the gate holds by default)
+  const quickOff = await post('/scans/quick', { url: `https://${LAB}/`, actor: 'admin' });
+  check('quick scan refused when dev-trust is off (403)', quickOff.statusCode === 403, `got ${quickOff.statusCode}`);
+
   await app.close();
+
+  // Second app in dev-trust mode: a one-URL quick scan auto-grants, crawls, and
+  // reports — no grant lifecycle, no flows, no auth.
+  const html = (body: string): RecordedResponse => ({ status: 200, headers: { 'content-type': 'text/html' }, body });
+  const site: Sender = async (req) => {
+    const u = new URL(req.url);
+    if (u.pathname === '/') return html('<a href="/go?next=x">g</a>');
+    if (u.pathname === '/go') return { status: 302, headers: { location: u.searchParams.get('next') ?? '/' }, body: '' };
+    return json(404, '{}');
+  };
+  const devApp = await buildApp({
+    lab: new LabPolicy(false, [], { allowPrivateTargets: true }), sender: site,
+    fingerprintSecret: 'smoke', devTrust: true,
+  });
+  const df = devApp.getHttpAdapter().getInstance();
+  const devHealth = JSON.parse((await df.inject({ method: 'GET', url: '/health' })).payload);
+  check('health reports dev-trust on', devHealth.devTrust === true);
+  const quick = await df.inject({ method: 'POST', url: '/scans/quick', payload: { url: `https://${LAB}/`, actor: 'tester' } as any });
+  const q = JSON.parse(quick.payload);
+  check('quick scan from a URL runs and reports', quick.statusCode === 201 && (q.status === 'done') && q.confirmed >= 1, JSON.stringify(q));
+  await devApp.close();
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exit(failed ? 1 : 0);
 }

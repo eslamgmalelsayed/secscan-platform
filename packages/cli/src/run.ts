@@ -27,6 +27,9 @@ export interface CliScan {
   stateChanging?: boolean;
   tokens?: string[];
   actor?: string;
+  /** When set and `flows` is empty, crawl the public surface from `root` to
+   *  discover endpoints (the one-URL `quick` path). */
+  discover?: { maxPages?: number };
 }
 
 export interface CliDeps {
@@ -97,7 +100,7 @@ export async function runScan(opts: CliScan, deps: CliDeps = {}): Promise<CliRes
 
   const scan = await core.scan.run({
     engagementId, grantId, flows: opts.flows, identities,
-    rootUrl: root, actor: opts.actor ?? 'cli', tokens: opts.tokens,
+    rootUrl: root, actor: opts.actor ?? 'cli', tokens: opts.tokens, discover: opts.discover,
   });
 
   return {

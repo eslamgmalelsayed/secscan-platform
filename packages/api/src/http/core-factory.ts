@@ -40,6 +40,9 @@ export interface CoreOptions {
   scanQueue?: ScanQueue;
   /** Cross-process stop flag (defaults to in-memory for single-process runs). */
   stopSignal?: StopSignal;
+  /** Local dev-trust: enables POST /scans/quick (auto-grant + crawl from a URL).
+   *  Loopback only; never for a shared deployment. Default false. */
+  devTrust?: boolean;
 }
 
 export interface CoreGraph {
@@ -58,6 +61,7 @@ export interface CoreGraph {
   identities: Identity[];
   retest: RetestService;
   queued: boolean;
+  devTrust: boolean;
 }
 
 export function buildCore(opts: CoreOptions): CoreGraph {
@@ -84,7 +88,7 @@ export function buildCore(opts: CoreOptions): CoreGraph {
     audit: s.audit, grants: s.grants, engagements: s.engagements, scans: s.scans,
     auth, scan, report, retest, lab: opts.lab, ownership: opts.ownership,
     adminToken: opts.adminToken, apiAuth: opts.auth, ownerEmailEnabled: !!opts.mailer,
-    identities: opts.identities ?? [], queued: !!opts.scanQueue,
+    identities: opts.identities ?? [], queued: !!opts.scanQueue, devTrust: !!opts.devTrust,
   };
 }
 

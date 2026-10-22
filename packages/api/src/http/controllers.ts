@@ -38,6 +38,12 @@ const ScanBody = z.object({
   rootUrl: z.string().url().optional(),
   tokens: z.array(z.string()).optional(),
   skipChecks: z.boolean().optional(),
+  discover: z.object({ maxPages: z.number().int().positive().max(200).optional(), maxFlows: z.number().int().positive().max(500).optional() }).optional(),
+});
+const QuickBody = z.object({
+  url: z.string().url(),
+  maxPages: z.number().int().positive().max(200).optional(),
+  identities: z.array(IdentitySchema).optional(),
 });
 const LangSchema = z.enum(['ar', 'en']).default('ar');
 const ConfirmBody = z.object({ challengeId: z.string().min(1), code: z.string().min(1).max(12) });
@@ -51,6 +57,7 @@ export class HealthController {
       ok: true, legalResolved: this.core.lab.legalResolved,
       adminTokenRequired: !!this.core.adminToken, apiTokenRequired: !!this.core.apiAuth,
       ownerEmailSignOff: this.core.ownerEmailEnabled, identities: this.core.identities.length,
+      devTrust: this.core.devTrust,
     };
   }
 }
@@ -197,6 +204,59 @@ export class ScansController {
     return {
       id: scan.id, status: scan.status, confirmed: scan.findings.length,
       review: scan.review?.length ?? 0, notTested: scan.notTested.length, telemetry: scan.telemetry,
+    };
+  }
+
+  /**
+   * One-step scan from a single URL (dev-trust local mode only). Auto-walks the
+   * authorization lifecycle for the pasted host, crawls its public surface, and
+   * runs the non-destructive suite — so a tester never touches grants or HAR.
+   * Refused unless SECSCAN_DEV_TRUST=true; the §3.2 lab lock is bypassed only
+   * for the host the caller pasted, on a loopback-bound server.
+   */
+  @Post('/quick')
+  async quick(@Req() req: any, @Body() body: any) {
+    if (!this.core.devTrust) {
+      throw new ForbiddenException('quick scan is available only in dev-trust local mode (SECSCAN_DEV_TRUST=true)');
+    }
+    const input = QuickBody.parse(body);
+    const actor = actorOf(req, body);
+    const u = new URL(input.url);
+    const host = u.hostname;
+    const scheme = u.protocol.replace(':', '');
+    const port = u.port ? Number(u.port) : null;
+    this.core.lab.allowHost(host); // dev-trust: the tester asserts they own this
+
+    const now = Date.now();
+    const grantId = `quick-${host}-${now}`;
+    const notBefore = new Date(now - 60_000).toISOString();
+    const notAfter = new Date(now + 24 * 3_600_000).toISOString();
+    await this.core.auth.createGrant({
+      grantId, targets: [{ host, scheme, port }],
+      ownershipProof: 'dns_txt', ownershipToken: `secscan-verify-${grantId}`,
+      chain: [{ party: 'dev-trust', email: 'dev@secscan.local', role: 'requester', signedAt: notBefore, statement: 'dev-trust quick scan' }],
+      notBefore, notAfter, status: 'pending_owner',
+    }, actor);
+    await this.core.auth.recordOwnershipVerified(grantId, 'dev-trust');
+    await this.core.auth.ownerSign(grantId, { party: 'dev-trust-owner', email: 'owner@secscan.local', role: 'system_owner', signedAt: new Date().toISOString(), statement: 'dev-trust owner sign-off' }, 'dev-trust');
+    await this.core.auth.adminApprove(grantId, 'dev-trust');
+
+    const engagementId = `quick-${host}`;
+    await this.core.engagements.save(Engagement.parse({
+      id: engagementId, client: host, preparedBy: 'SecScan (quick)', assets: [host],
+      environment: scheme === 'http' ? 'staging' : 'production', authorizationRef: grantId,
+      window: { start: notBefore, end: notAfter },
+      methodology: { ar: 'فحص سريع بزحف غير مدمّر', en: 'Quick non-destructive crawl + checks' },
+      limitations: { ar: 'السطح العام فقط ما لم تُضف هويات', en: 'Public surface only unless identities are added' },
+    }));
+
+    const scan = await this.core.scan.enqueue({
+      engagementId, grantId, flows: [], identities: input.identities ?? this.core.identities,
+      rootUrl: input.url, discover: { maxPages: input.maxPages }, actor,
+    });
+    return {
+      id: scan.id, status: scan.status, grantId, engagementId,
+      confirmed: scan.findings.length, review: scan.review?.length ?? 0, notTested: scan.notTested.length, telemetry: scan.telemetry,
     };
   }
 

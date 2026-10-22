@@ -58,7 +58,7 @@ async function main() {
     await core.scan.execute(job.scanId, {
       engagementId: job.engagementId, grantId: job.grantId, flows: job.flows,
       identities: job.identities, rootUrl: job.rootUrl, skipChecks: job.skipChecks,
-      actor: job.actor, tokens,
+      actor: job.actor, tokens, discover: job.discover,
     });
   });
 
