@@ -13,7 +13,7 @@
 import { createServer, request as httpRequest } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { resolve, normalize } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildApp, LabPolicy } from '@secscan/api';
 import { createHttpSender, SecretStore, loadIdentities } from '@secscan/engine';
@@ -109,13 +109,16 @@ export async function startServer(opts = {}) {
       });
       return;
     }
-    // static web (SPA fallback to index.html)
+    // static web (SPA fallback to index.html). URL paths are always forward-slash;
+    // strip the leading slash and join under webDir (no path.normalize — it would
+    // introduce backslashes on Windows and break the join).
     if (req.method !== 'GET') { res.writeHead(405); return res.end(); }
-    let rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.(\/|\\|$))+/, '').replace(/^\/+/, '');
-    let file = resolve(webDir, rel || 'index.html');
-    if (!file.startsWith(resolve(webDir))) file = resolve(webDir, 'index.html');
-    if (!existsSync(file) || !statSync(file).isFile()) file = resolve(webDir, 'index.html');
-    const ext = file.slice(file.lastIndexOf('.'));
+    const rel = decodeURIComponent(url.pathname).replace(/\\/g, '/').replace(/^\/+/, '') || 'index.html';
+    let file = resolve(webDir, rel);
+    const base = resolve(webDir);
+    const inside = file === base || file.startsWith(base + sep);
+    if (!inside || !existsSync(file) || !statSync(file).isFile()) file = resolve(webDir, 'index.html');
+    const ext = file.slice(file.lastIndexOf('.')).toLowerCase();
     res.writeHead(200, { 'content-type': MIME[ext] ?? 'application/octet-stream' });
     createReadStream(file).pipe(res);
   });
