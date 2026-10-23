@@ -14,6 +14,7 @@ import { createServer, request as httpRequest } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { resolve, normalize } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { buildApp, LabPolicy } from '@secscan/api';
 import { createHttpSender, SecretStore, loadIdentities } from '@secscan/engine';
 import { readFileSync } from 'node:fs';
@@ -129,8 +130,9 @@ export async function startServer(opts = {}) {
   return { url, host, close: async () => { front.close(); await api.close(); } };
 }
 
-// Run directly: npm run serve
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Run directly: npm run serve. pathToFileURL makes the "is this the entry
+// script?" check work on Windows too (a C:\… path vs a file:/// URL).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { url } = await startServer();
   console.log(`[serve] SecScan running at ${url} (single process, dev-trust)`);
 }
