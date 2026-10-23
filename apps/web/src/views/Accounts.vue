@@ -7,8 +7,22 @@ const identities = ref<Identity[]>([]);
 const busy = ref(false);
 const form = reactive({ role: 'customer', tenant: '', cookieName: 'sid', cookieValue: '', bearer: '', liveness: '' });
 
+// Desktop app exposes window.secscan.captureLogin for one-click login capture.
+const desktop = (window as any).secscan?.desktop === true;
+const loginUrl = ref('');
+
 async function load() { try { identities.value = await api.identities(); } catch { /* auth */ } }
 onMounted(load);
+
+async function captureViaLogin() {
+  if (!loginUrl.value.trim()) return notify('enter the site URL to log in to', true);
+  if (!form.role.trim()) return notify('set a role first', true);
+  busy.value = true;
+  const r = await (window as any).secscan.captureLogin({ url: loginUrl.value.trim(), role: form.role.trim(), tenant: form.tenant.trim() || null });
+  busy.value = false;
+  if (r?.error) return notify(r.error, true);
+  if (r?.identities) { identities.value = r.identities; notify('login captured'); }
+}
 
 async function add() {
   if (!form.role.trim()) return notify('role is required', true);
@@ -27,8 +41,17 @@ async function add() {
   <div>
     <div class="page-head"><div><h1>Test accounts</h1><p>Add two or more logins so the scanner can test object-level authorization (IDOR / cross-tenant). Secrets stay server-side; only the role/tenant key is ever shown.</p></div></div>
 
+    <div v-if="desktop" class="card accent-border" style="margin-bottom: 16px">
+      <h3>Log in &amp; capture <span class="chip accent">desktop</span></h3>
+      <p class="sub">Set the role/tenant below, enter the site, and sign in — a window opens; when you close it, the session is captured as a test account. No cookie copying. Do this for two accounts to enable IDOR.</p>
+      <div class="row" style="gap: 8px; margin-top: 10px">
+        <input v-model="loginUrl" placeholder="https://yoursite.com/login" style="flex: 1" />
+        <button class="btn primary" :disabled="busy" @click="captureViaLogin">{{ busy ? 'Waiting for login…' : 'Log in & capture' }}</button>
+      </div>
+    </div>
+
     <div class="card" style="margin-bottom: 16px">
-      <h3>How to get a session cookie</h3>
+      <h3>How to get a session cookie<span v-if="desktop" class="hint"> (manual alternative)</span></h3>
       <ol class="sub" style="margin: 8px 0 0; padding-left: 18px; line-height: 1.8">
         <li>Log in to the target site as the test account in your browser.</li>
         <li>Open DevTools (F12) → <b>Application</b> → <b>Cookies</b> → pick the site.</li>

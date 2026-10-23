@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue';
 import { api, type Finding, type ScanRecord, type ScanSummary } from '../api';
 import { attempt } from '../toast';
+import { renderMarkdown } from '../md';
 
 const props = defineProps<{ scanId: string | null }>();
 const emit = defineEmits<{ select: [id: string] }>();
@@ -93,7 +94,7 @@ const sev = (f: Finding) => f.severity;
                 <button class="btn sm" @click="loadReport">Generate</button>
               </div>
             </div>
-            <pre v-if="report" :class="{ rtl: reportLang === 'ar' }" style="margin-top: 12px">{{ report }}</pre>
+            <div v-if="report" class="report-md" :class="{ rtl: reportLang === 'ar' }" style="margin-top: 12px" v-html="renderMarkdown(report)"></div>
             <p v-else class="hint" style="margin-top: 10px">Generate the bilingual report (Markdown) for this scan.</p>
           </div>
 

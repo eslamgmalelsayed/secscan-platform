@@ -10,7 +10,7 @@
  * Dev:   from the repo root, `npm run build` then `npm --workspace @secscan/desktop run start`.
  * Build: `npm --workspace @secscan/desktop run dist:win` (needs electron + electron-builder installed).
  */
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, session } = require('electron');
 const { fork } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
@@ -53,6 +53,44 @@ function createWindow() {
   // open external links in the system browser, not inside the app window
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
 }
+
+/**
+ * Open a real browser window at the target site, let the user sign in, and when
+ * they close it, read the session cookies from that window's isolated partition
+ * and POST them to the local API as a test account. This is the "normal user"
+ * path — no DevTools, no copy-paste.
+ */
+ipcMain.handle('secscan:capture-login', async (_evt, opts) => {
+  try {
+    const { url, role, tenant } = opts ?? {};
+    if (!url || !role) return { error: 'url and role are required' };
+    const partition = `persist:capture-${Date.now()}`;
+    const win = new BrowserWindow({ width: 1000, height: 760, title: `Sign in to capture — ${role}`, webPreferences: { partition } });
+    win.loadURL(url);
+
+    await new Promise((resolve) => win.once('closed', resolve)); // user logs in, then closes the window
+
+    const sess = session.fromPartition(partition);
+    const host = new URL(url).hostname;
+    const cookies = await sess.cookies.get({ domain: host }).catch(() => []);
+    const jar = {};
+    for (const c of cookies) jar[c.name] = c.value;
+    await sess.clearStorageData().catch(() => {}); // don't leave the login persisted on disk
+    if (!Object.keys(jar).length) return { error: 'no cookies captured — was the login completed before closing?' };
+
+    const body = JSON.stringify({ role, tenant: tenant || null, cookies: jar });
+    const result = await new Promise((resolve) => {
+      const req = http.request(`${URL}/api/identities/capture`, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, (res) => {
+        let d = ''; res.on('data', (c) => (d += c)); res.on('end', () => { try { resolve(JSON.parse(d)); } catch { resolve({ error: 'capture failed' }); } });
+      });
+      req.on('error', () => resolve({ error: 'could not reach the local API' }));
+      req.write(body); req.end();
+    });
+    return result;
+  } catch (e) {
+    return { error: String(e && e.message ? e.message : e) };
+  }
+});
 
 app.whenReady().then(() => { startServer(); waitForServer(createWindow); });
 app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
