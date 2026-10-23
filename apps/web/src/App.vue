@@ -75,7 +75,7 @@ const nav: { id: View; label: string; step: number }[] = [
       <Overview v-if="view === 'overview'" :health="health" @go="(v: View) => view = v" @open-scan="openScan" />
       <Grants v-else-if="view === 'grants'" />
       <ScanSetup v-else-if="view === 'scan'" @open-scan="openScan" />
-      <Network v-else-if="view === 'network'" />
+      <Network v-else-if="view === 'network'" @open-scan="openScan" />
       <Accounts v-else-if="view === 'accounts'" />
       <Results v-else :scan-id="selectedScan" @select="(id: string) => selectedScan = id" />
     </main>

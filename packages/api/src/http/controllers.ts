@@ -4,6 +4,7 @@ import { Engagement } from '@secscan/shared';
 import type { Lang } from '@secscan/report';
 import { fromHar, fromOpenApi } from '@secscan/importers';
 import { runAgentAudit } from '@secscan/engine';
+import { proveImpact } from '@secscan/checks';
 import { CORE, type CoreGraph } from './core-factory';
 import { safeEqual } from './auth';
 
@@ -319,6 +320,26 @@ export class ScansController {
     const s = await this.core.scans.get(id);
     if (!s) throw new NotFoundError(`scan ${id} not found`);
     return s;
+  }
+
+  /**
+   * Gated proof-of-impact over a scan's confirmed findings. OFF by default: it
+   * runs only when the operator explicitly invokes it (this call), the grant
+   * permits state change (staging), and each finding is consented. Built-in
+   * handlers are bounded — they re-demonstrate the confirmed signal, never dump
+   * data or escalate. Skips are returned with reasons so the gate is visible.
+   */
+  @Post(':id/prove')
+  async prove(@Param('id') id: string) {
+    const s = await this.core.scans.get(id);
+    if (!s) throw new NotFoundError(`scan ${id} not found`);
+    const grant = await this.core.grants.get(s.grantId);
+    const confirmed = s.findings;
+    return proveImpact(confirmed, {
+      enabled: true, // explicit: the operator asked for it by calling this
+      allowStateChanging: !!grant?.grant.allowStateChanging, // staging gate
+      consent: new Set(confirmed.map((f) => f.id)),
+    });
   }
 
   @Get(':id/report')

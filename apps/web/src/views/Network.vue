@@ -1,11 +1,23 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { api, type AgentAudit } from '../api';
-import { attempt } from '../toast';
+import { attempt, notify } from '../toast';
 
+const emit = defineEmits<{ 'open-scan': [id: string] }>();
 const audit = ref<AgentAudit | null>(null);
 const busy = ref(false);
+const scanningPort = ref('');
 const cidr = ref('');
+
+// Scan a discovered device's service directly (discover -> scan handoff).
+async function scanService(host: string, port: number) {
+  const scheme = port === 443 || port === 8443 ? 'https' : 'http';
+  const url = `${scheme}://${host}:${port}/`;
+  scanningPort.value = `${host}:${port}`;
+  const scan = await attempt(() => api.scans.quick(url), `scanning ${url}`);
+  scanningPort.value = '';
+  if (scan) { notify(`scan started for ${url}`); emit('open-scan', scan.id); }
+}
 
 async function run() {
   busy.value = true;
@@ -40,8 +52,11 @@ const sevClass = (s: string) => (s === 'critical' || s === 'high' ? 'bad' : s ==
         <div class="card pad-0">
           <div style="padding: 14px 16px"><h3 style="margin: 0">Devices on {{ audit.cidr ?? 'the LAN' }}</h3></div>
           <table v-if="audit.devices.length">
-            <thead><tr><th>Host</th><th>Open ports</th></tr></thead>
-            <tbody><tr v-for="d in audit.devices" :key="d.host"><td class="mono">{{ d.host }}</td><td class="mono">{{ d.ports.join(', ') }}</td></tr></tbody>
+            <thead><tr><th>Host</th><th>Open ports — click to scan the service</th></tr></thead>
+            <tbody><tr v-for="d in audit.devices" :key="d.host">
+              <td class="mono">{{ d.host }}</td>
+              <td><button v-for="p in d.ports" :key="p" class="btn sm" style="margin: 2px 4px 2px 0" :disabled="scanningPort === `${d.host}:${p}`" @click="scanService(d.host, p)">{{ scanningPort === `${d.host}:${p}` ? 'scanning…' : p }}</button></td>
+            </tr></tbody>
           </table>
           <div v-else class="empty">No devices with open ports found.</div>
         </div>

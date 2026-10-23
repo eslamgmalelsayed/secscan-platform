@@ -6,6 +6,7 @@ export * from './injection';
 export * from './logic';
 export * from './session';
 export * from './mobile';
+export * from './binary';
 export * from './exploit';
 export * from './jwt';
 export * from './run';

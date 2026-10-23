@@ -40,3 +40,18 @@ Produces an NSIS installer under `apps/desktop/dist/`.
 
 This shell reuses the web UI as-is; the API stays server-runnable, so the
 web/SaaS path remains open alongside the desktop app.
+
+## Code-signing & auto-update (for distribution)
+
+Unsigned installers trigger SmartScreen/Gatekeeper warnings. Signing needs your
+own certificate — add it to `build` in `package.json` (nothing to commit here):
+
+- **Windows (Authenticode):** set env `CSC_LINK` (path to your `.pfx`) and
+  `CSC_KEY_PASSWORD`, then run `dist:win`. electron-builder signs automatically.
+- **macOS (notarization):** set `CSC_LINK`/`CSC_KEY_PASSWORD` plus
+  `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`.
+
+**Auto-update:** add an electron-builder `publish` target (e.g. a GitHub
+releases provider) and wire `electron-updater` in `main.cjs`
+(`autoUpdater.checkForUpdatesAndNotify()` on `app.whenReady`). Left out by
+default so the app has no network/update behaviour until you choose a channel.

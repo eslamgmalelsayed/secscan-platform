@@ -34,6 +34,15 @@ async function stop() {
   if (await attempt(() => api.scans.stop(scan.value!.id), 'stop requested')) loadScan(scan.value.id);
 }
 
+const proving = ref(false);
+const proof = ref<{ proofs: { findingId: string; proof: string }[]; skipped: { findingId: string; reason: string }[] } | null>(null);
+async function prove() {
+  if (!scan.value) return;
+  proving.value = true;
+  proof.value = await attempt(() => api.scans.prove(scan.value!.id));
+  proving.value = false;
+}
+
 onUnmounted(() => clearTimeout(pollTimer));
 async function loadReport() {
   if (!props.scanId) return;
@@ -96,6 +105,16 @@ const sev = (f: Finding) => f.severity;
             </div>
             <div v-if="report" class="report-md" :class="{ rtl: reportLang === 'ar' }" style="margin-top: 12px" v-html="renderMarkdown(report)"></div>
             <p v-else class="hint" style="margin-top: 10px">Generate the bilingual report (Markdown) for this scan.</p>
+          </div>
+
+          <div v-if="scan.findings.length" class="card" style="margin-bottom: 16px">
+            <div class="row between"><div><h3 style="margin: 0">Proof of impact <span class="chip warn">gated</span></h3><p class="sub" style="margin: 4px 0 0">Off by default. Runs only on a staging grant (state-changing allowed), per finding; bounded — it re-demonstrates the confirmed signal, never dumps data.</p></div>
+              <button class="btn sm" :disabled="proving" @click="prove">{{ proving ? 'Running…' : 'Prove impact' }}</button>
+            </div>
+            <div v-if="proof" style="margin-top: 10px">
+              <div v-for="(p, i) in proof.proofs" :key="'p' + i" class="chip ok" style="display: block; margin: 4px 0; padding: 8px 10px">✓ {{ p.proof }}</div>
+              <div v-for="(s, i) in proof.skipped" :key="'s' + i" class="hint mono" style="margin: 3px 0">— {{ s.findingId }}: {{ s.reason }}</div>
+            </div>
           </div>
 
           <h2 style="margin: 20px 0 10px">Confirmed findings</h2>

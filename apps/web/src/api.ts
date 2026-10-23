@@ -85,6 +85,8 @@ export const api = {
     stop: (id: string) => call<{ id: string; stopping: boolean }>('POST', `/scans/${id}/stop`, { actor: settings.actor }),
     report: (id: string, lang: 'ar' | 'en') => call<{ markdown: string }>('GET', `/scans/${id}/report?lang=${lang}`),
     evidence: (id: string) => call<unknown>('GET', `/scans/${id}/evidence`),
+    // Gated proof-of-impact: runs only on a staging grant; bounded, non-destructive.
+    prove: (id: string) => call<{ proofs: { findingId: string; category: string; proof: string }[]; skipped: { findingId: string; reason: string }[] }>('POST', `/scans/${id}/prove`),
   },
 };
 
