@@ -56,7 +56,7 @@ export async function startServer(opts = {}) {
     sender: createHttpSender({ store }),
     fingerprintSecret: randomBytes(24).toString('hex'),
     identities: loaded?.identities, liveness: loaded?.liveness,
-    devTrust: true,
+    store, devTrust: true,
   });
   await api.listen(apiPort, '127.0.0.1');
 

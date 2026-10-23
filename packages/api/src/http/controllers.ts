@@ -50,6 +50,14 @@ const QuickBody = z.object({
    *  findings possible) instead of crawling the surface. */
   flows: z.array(FlowSchema).optional(),
 });
+const CaptureBody = z.object({
+  role: z.string().min(1),
+  tenant: z.string().nullable().optional(),
+  cookies: z.record(z.string()).optional(),
+  headers: z.record(z.string()).optional(),
+  bearer: z.string().optional(),
+  liveness: z.string().url().optional(),
+}).refine((m) => m.cookies || m.headers || m.bearer, { message: 'provide cookies, headers or a bearer token' });
 const LangSchema = z.enum(['ar', 'en']).default('ar');
 const ConfirmBody = z.object({ challengeId: z.string().min(1), code: z.string().min(1).max(12) });
 
@@ -73,6 +81,16 @@ export class IdentitiesController {
   constructor(@Inject(CORE) private core: CoreGraph) {}
   @Get()
   list() { return this.core.identities; }
+
+  /** Capture a test login at runtime (paste a session cookie / header / bearer).
+   *  The material goes into the shared secret store; the next scan uses it. */
+  @Post('capture')
+  capture(@Body() body: any) {
+    const b = CaptureBody.parse(body);
+    const material = { cookies: b.cookies, headers: b.headers, bearer: b.bearer };
+    const id = this.core.captureIdentity(b.role, b.tenant ?? null, material, b.liveness);
+    return { captured: id, identities: this.core.identities };
+  }
 }
 
 /** Turns a HAR export or an OpenAPI document into flows a client can edit and submit. */

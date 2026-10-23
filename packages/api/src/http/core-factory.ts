@@ -1,5 +1,5 @@
 /** Builds the core service graph used by both the HTTP app and the smoke test. */
-import type { HostResolver, Identity, OwnershipDeps, PacingOptions, Sender } from '@secscan/engine';
+import type { HostResolver, Identity, OwnershipDeps, PacingOptions, Sender, SecretStore, SessionMaterial } from '@secscan/engine';
 import {
   AppendOnlyAuditLog, AuthorizationService, LabPolicy, ReportService, RetestService, ScanService,
   InMemoryGrantRepo, InMemoryEngagementRepo, InMemoryScanRepo, InMemoryOwnerChallengeStore, InMemoryStopSignal,
@@ -35,6 +35,9 @@ export interface CoreOptions {
   mailer?: Mailer;
   /** Test identities loaded at boot (keys only are ever exposed over HTTP). */
   identities?: Identity[];
+  /** The SAME secret store the sender uses, so captured logins resolve at send
+   *  time. Required for runtime identity capture; omit for a read-only setup. */
+  store?: SecretStore;
   stores?: CoreStores;
   /** When set, POST /scans queues for a worker; otherwise scans run inline. */
   scanQueue?: ScanQueue;
@@ -62,6 +65,9 @@ export interface CoreGraph {
   retest: RetestService;
   queued: boolean;
   devTrust: boolean;
+  /** Add a test login at runtime: material goes into the shared store, the
+   *  identity is appended (used by the next scan). Returns the identity key. */
+  captureIdentity(role: string, tenant: string | null, material: SessionMaterial, liveness?: string): { role: string; tenant: string | null; sessionRef: string };
 }
 
 export function buildCore(opts: CoreOptions): CoreGraph {
@@ -77,10 +83,14 @@ export function buildCore(opts: CoreOptions): CoreGraph {
     opts.mailer ? { mailer: opts.mailer, challenges: s.challenges, secret: opts.fingerprintSecret } : undefined,
   );
   const stopSignal: StopSignal = opts.stopSignal ?? new InMemoryStopSignal();
+  // Mutable so runtime-captured logins are seen by the next scan; the scan
+  // service reads the same liveness object.
+  const identities: Identity[] = opts.identities ? [...opts.identities] : [];
+  const liveness: Record<string, string> = { ...(opts.liveness ?? {}) };
   const scan = new ScanService({
     auth, lab: opts.lab, scans: s.scans, engagements: s.engagements, audit: s.audit,
     sender: opts.sender, fingerprintSecret: opts.fingerprintSecret, resolveHost: opts.resolveHost,
-    pacing: opts.pacing, liveness: opts.liveness, scanQueue: opts.scanQueue, stopSignal,
+    pacing: opts.pacing, liveness, scanQueue: opts.scanQueue, stopSignal,
   });
   const report = new ReportService(s.engagements, s.scans);
   const retest = new RetestService(s.scans, scan);
@@ -88,7 +98,14 @@ export function buildCore(opts: CoreOptions): CoreGraph {
     audit: s.audit, grants: s.grants, engagements: s.engagements, scans: s.scans,
     auth, scan, report, retest, lab: opts.lab, ownership: opts.ownership,
     adminToken: opts.adminToken, apiAuth: opts.auth, ownerEmailEnabled: !!opts.mailer,
-    identities: opts.identities ?? [], queued: !!opts.scanQueue, devTrust: !!opts.devTrust,
+    identities, queued: !!opts.scanQueue, devTrust: !!opts.devTrust,
+    captureIdentity(role, tenant, material, live) {
+      const sessionRef = tenant ? `${role}/${tenant}` : role;
+      opts.store?.put(sessionRef, material);
+      if (live) liveness[sessionRef] = live;
+      if (!identities.some((i) => i.sessionRef === sessionRef)) identities.push({ role, tenant: tenant ?? null, sessionRef });
+      return { role, tenant: tenant ?? null, sessionRef };
+    },
   };
 }
 

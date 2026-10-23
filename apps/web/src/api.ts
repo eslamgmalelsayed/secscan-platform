@@ -42,6 +42,8 @@ export interface Health {
 export const api = {
   health: () => call<Health>('GET', '/health'),
   identities: () => call<Identity[]>('GET', '/identities'),
+  captureIdentity: (body: { role: string; tenant?: string | null; cookies?: Record<string, string>; headers?: Record<string, string>; bearer?: string; liveness?: string }) =>
+    call<{ captured: Identity; identities: Identity[] }>('POST', '/identities/capture', body),
   grants: {
     list: () => call<GrantSummary[]>('GET', '/grants'),
     get: (id: string) => call<any>('GET', `/grants/${id}`),

@@ -78,6 +78,7 @@ async function main() {
     fingerprintSecret,
     liveness: loaded?.liveness,
     identities: loaded?.identities,
+    store,
     adminToken,
     auth,
     mailer,
