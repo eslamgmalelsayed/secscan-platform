@@ -137,6 +137,7 @@ const sev = (f: Finding) => f.severity;
 
           <template v-if="scan.review?.length">
             <h2 style="margin: 24px 0 10px">Needs human review</h2>
+            <p class="hint" style="margin: -4px 0 10px">These are <b>candidates, not confirmed vulnerabilities</b> — the tool saw a signal it can't prove on its own (shared vs. owned object, reflection vs. exploitable, seeded-alike accounts). Reproduce each manually before reporting it.</p>
             <div v-for="f in scan.review" :key="f.id" class="finding">
               <div class="head" @click="toggle(f.id)">
                 <div><span class="sev" :class="sev(f)">{{ f.severity }}</span> <b style="margin-left: 8px">{{ f.title.en }}</b></div>

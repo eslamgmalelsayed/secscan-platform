@@ -70,8 +70,38 @@ export async function startServer(opts = {}) {
     return receivers.size;
   };
 
+  // Exposure hardening: loopback by default. Binding off-loopback (e.g.
+  // SECSCAN_HOST=0.0.0.0 for device messaging) exposes the dev-trust console —
+  // which has no auth and the lab lock off — to the whole network. So when bound
+  // off-loopback we REQUIRE an access token for the console + /api; only the
+  // receiver (/display) and its SSE stream stay open so devices can still
+  // receive broadcasts. On loopback, no token is needed.
+  const host = opts.host ?? process.env.SECSCAN_HOST ?? '127.0.0.1';
+  const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  const accessToken = process.env.SECSCAN_ACCESS_TOKEN;
+  if (!isLoopback && !accessToken) {
+    throw new Error(`refusing to bind to ${host}: that exposes the no-auth dev-trust console on the network. Set SECSCAN_ACCESS_TOKEN=<secret> to allow it (then open the URL with ?token=<secret>), or keep the default loopback bind.`);
+  }
+  const openPath = (p) => p === '/display' || p === '/api/messages/stream';
+  const authed = (req, url) =>
+    isLoopback ||
+    (req.headers.cookie ?? '').split(';').some((c) => c.trim() === `secscan_access=${accessToken}`) ||
+    url.searchParams.get('token') === accessToken;
+
   const front = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
+
+    // token gate (only active when bound off-loopback)
+    if (!isLoopback && !openPath(url.pathname)) {
+      if (url.searchParams.get('token') === accessToken) {
+        res.writeHead(302, { 'set-cookie': `secscan_access=${accessToken}; HttpOnly; SameSite=Strict; Path=/`, location: url.pathname });
+        return res.end();
+      }
+      if (!authed(req, url)) {
+        res.writeHead(401, { 'content-type': 'text/html' });
+        return res.end('<p style="font:16px system-ui;margin:40px">Access token required. Open this URL with <code>?token=YOUR_TOKEN</code> (the value of SECSCAN_ACCESS_TOKEN).</p>');
+      }
+    }
 
     if (url.pathname === '/api/messages/stream' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
@@ -122,10 +152,6 @@ export async function startServer(opts = {}) {
     res.writeHead(200, { 'content-type': MIME[ext] ?? 'application/octet-stream' });
     createReadStream(file).pipe(res);
   });
-  // Loopback by default. Set SECSCAN_HOST=0.0.0.0 (or pass host) to let OTHER
-  // devices on your LAN open /display and reach the console — opt-in, because it
-  // exposes the dev-trust UI on the network.
-  const host = opts.host ?? process.env.SECSCAN_HOST ?? '127.0.0.1';
   await new Promise((r) => front.listen(webPort, host, r));
 
   const shown = host === '0.0.0.0' ? (localLanIp() ?? host) : host;
@@ -136,6 +162,10 @@ export async function startServer(opts = {}) {
 // Run directly: npm run serve. pathToFileURL makes the "is this the entry
 // script?" check work on Windows too (a C:\… path vs a file:/// URL).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const { url } = await startServer();
+  const { url, host } = await startServer();
   console.log(`[serve] SecScan running at ${url} (single process, dev-trust)`);
+  console.log('[serve] state is IN MEMORY — grants, scans and history are lost on restart. Use the Postgres path (npm run local -- --full) to persist.');
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
+    console.log('[serve] exposed on the network: open the console with ?token=<SECSCAN_ACCESS_TOKEN>; /display stays open for receivers.');
+  }
 }
