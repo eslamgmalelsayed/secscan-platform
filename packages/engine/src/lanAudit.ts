@@ -56,18 +56,35 @@ export function detectArpSpoof(entries: ArpEntry[], gatewayIp?: string): LanFind
   return out;
 }
 
-export interface WifiInfo { ssid?: string; security?: string; wps?: boolean }
+export interface WifiInfo { ssid?: string; bssid?: string; security?: string; wps?: boolean }
 
-/** Extract SSID + security from nmcli / netsh / airport output (best-effort). */
+function knownSecurity(value: string | undefined): string | undefined {
+  return value && /^(?:WPA[123]?|WEP|Open|None|OWE|SAE)(?:$|[\s/-])/i.test(value) ? value : undefined;
+}
+
+/** Only the connected interface can supply evidence about this connection. */
 export function parseWifiSecurity(text: string): WifiInfo {
-  const info: WifiInfo = {};
-  const ssid = text.match(/(?:^|\n)\s*(?:SSID|ESSID)\s*[:=]?\s*"?([^"\n]+?)"?\s*(?:\n|$)/i)?.[1]?.trim();
-  if (ssid && ssid !== '--') info.ssid = ssid;
-  const sec = text.match(/(?:security|authentication|auth)\s*[:=]?\s*([^\n]+)/i)?.[1]?.trim()
-    ?? (/\bWPA3\b/i.test(text) ? 'WPA3' : /\bWPA2\b/i.test(text) ? 'WPA2' : /\bWPA\b/i.test(text) ? 'WPA' : /\bWEP\b/i.test(text) ? 'WEP' : /\b(open|none)\b/i.test(text) ? 'Open' : undefined);
-  if (sec) info.security = sec;
-  if (/wps\s*[:=]?\s*(on|enabled|configured)/i.test(text)) info.wps = true;
-  return info;
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.some(line => /^(yes|no):/.test(line))) {
+    const active = lines.filter(line => line.startsWith('yes:'));
+    if (active.length !== 1) return {};
+    // Split on unescaped separators: NetworkManager escapes both ':' and '\\'.
+    const parts = active[0].match(/(?:^|:)((?:\\.|[^:\\])*)/g)?.map((field, i) =>
+      (i ? field.slice(1) : field).replace(/\\(.)/g, '$1'));
+    if (!parts || (parts.length !== 3 && parts.length !== 4)) return {};
+    const security = parts.at(-1);
+    return { ssid: parts[1], bssid: parts.length === 4 ? parts[2] : undefined,
+      security: security === '' || security === '--' ? 'Open' : knownSecurity(security) };
+  }
+  const field = (name: string) => {
+    const matches = [...text.matchAll(new RegExp('^\\s*(?:' + name + ')\\s*[:=]\\s*([^\\r\\n]+)', 'gim'))];
+    return matches.length === 1 ? matches[0][1].trim().replace(/^"|"$/g, '') : undefined;
+  };
+  const ssid = field('SSID|ESSID');
+  if (!ssid || ssid === '--' || (field('State') && field('State')?.toLowerCase() !== 'connected')) return {};
+  const cipher = field('Cipher');
+  return { ssid, bssid: field('BSSID|AP BSSID'), security: cipher && /^WEP/i.test(cipher) ? 'WEP' : knownSecurity(field('Security|Authentication|Auth|link auth')),
+    wps: /^(on|enabled|configured)$/i.test(field('WPS') ?? '') || undefined };
 }
 
 /** Judge the WiFi crypto posture of the network the agent is on. */
@@ -75,7 +92,7 @@ export function auditWifiPosture(info: WifiInfo): LanFinding[] {
   const out: LanFinding[] = [];
   const s = (info.security ?? '').toUpperCase();
   const where = info.ssid ? ` on '${info.ssid}'` : '';
-  if (/OPEN|NONE/.test(s) || info.security === 'Open') out.push({ kind: 'wifi_open', severity: 'high', title: 'Open WiFi (no encryption)', detail: `the network${where} uses no link encryption — all traffic is sniffable` });
+  if (/OPEN|NONE/.test(s) || info.security === 'Open') out.push({ kind: 'wifi_open', severity: 'high', title: 'Open WiFi (no encryption)', detail: `the network${where} does not encrypt the WiFi link` });
   else if (/WEP/.test(s)) out.push({ kind: 'wifi_weak_crypto', severity: 'high', title: 'WEP encryption (broken)', detail: `the network${where} uses WEP, which is trivially crackable` });
   else if (/WPA(?!2|3)/.test(s) || s === 'WPA') out.push({ kind: 'wifi_weak_crypto', severity: 'medium', title: 'Legacy WPA (TKIP) encryption', detail: `the network${where} uses legacy WPA — upgrade to WPA2/WPA3` });
   else if (/WPA2/.test(s) && !/WPA3/.test(s)) out.push({ kind: 'wifi_weak_crypto', severity: 'low', title: 'WPA2 without WPA3', detail: `the network${where} is WPA2-only — enable WPA3 where supported` });

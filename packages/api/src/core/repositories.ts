@@ -19,7 +19,7 @@ export interface ScanRecord {
   id: string;
   engagementId: string;
   grantId: string;
-  status: 'queued' | 'running' | 'done' | 'failed';
+  status: 'queued' | 'running' | 'done' | 'partial' | 'failed';
   findings: Finding[];
   /** Below the confirmation bar: for human review, never in a client report. */
   review?: Finding[];
@@ -39,6 +39,7 @@ export interface EngagementRepo {
   list(): Promise<Engagement[]>;
 }
 export interface ScanRepo {
+  appendRetest(scanId:string,findingId:string,entry:Finding['retests'][number]):Promise<void>;
   save(s: ScanRecord): Promise<void>;
   get(id: string): Promise<ScanRecord | undefined>;
   list(engagementId?: string): Promise<ScanRecord[]>;
@@ -62,6 +63,12 @@ export class InMemoryEngagementRepo implements EngagementRepo {
 }
 export class InMemoryScanRepo implements ScanRepo {
   private m = new Map<string, ScanRecord>();
+  async appendRetest(scanId:string,findingId:string,entry:Finding['retests'][number]) {
+    const f=this.m.get(scanId)?.findings.find(f=>f.id===findingId);
+    if (!f) throw new Error('finding not found');
+    f.retests=[...(f.retests ?? []),clone(entry)];
+    if (entry.result==='still_open') f.status='open';
+  }
   async save(s: ScanRecord) { this.m.set(s.id, clone(s)); }
   async get(id: string) { const s = this.m.get(id); return s && clone(s); }
   async list(engagementId?: string) {

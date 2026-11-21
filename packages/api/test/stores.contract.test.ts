@@ -94,6 +94,16 @@ function contract(name: string, make: () => Promise<CoreStores>, extra?: (s: () 
       expect(await s.scans.list('other')).toEqual([]);
     });
 
+    it('appends concurrent retest events to the finding without replacing the scan', async () => {
+      await s.grants.save(grantRecord());
+      const scan = scanRecord();
+      await s.scans.save(scan);
+      await Promise.all(['r1','r2'].map(note => s.scans.appendRetest(scan.id,scan.findings[0].id,{at:T,result:'inconclusive',note})));
+      const back=await s.scans.get(scan.id);
+      expect(back!.findings[0].retests.map(e=>e.note)).toEqual(expect.arrayContaining(['r1','r2']));
+      expect(back!.review).toEqual(scan.review);
+    });
+
     it('audit is ordered and returns copies', async () => {
       await s.grants.save(grantRecord());
       await s.audit.append({ actor: 'a', action: 'one', grantId: 'g1' });
@@ -151,6 +161,14 @@ if (PG_URL) {
     );
     return handle.stores;
   }, () => {
+    it('persists assessment snapshots and rejects a stale project revision', async () => {
+      const { Assessments } = await import('../src/core/assessment');
+      const service = new Assessments(handle!.stores.projects!);
+      const p = await service.create('owner',{name:'PG assessment',assets:['example'],authorization:'permit',expires:'2099-01-01T00:00:00Z'});
+      await service.change('owner',p.id,p.revision,{type:'publish'});
+      await expect(service.change('owner',p.id,p.revision,{type:'publish'})).rejects.toThrow('Reload');
+      expect((await service.get('owner',p.id)).reports).toHaveLength(1);
+    });
     it('the database itself refuses UPDATE and DELETE on the audit log', async () => {
       await handle!.stores.audit.append({ actor: 'a', action: 'x' });
       await expect(handle!.db.auditEntry.updateMany({ data: { actor: 'evil' } })).rejects.toThrow(/append-only/);

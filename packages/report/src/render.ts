@@ -42,6 +42,8 @@ function findingBlock(f: Finding, lang: Lang): string {
       ? `- **الثقة:** ${f.confidence} · المراجع: ${f.controls.map((c) => `${c.framework} ${c.control}`).join('؛ ') || '—'}`
       : `- **Confidence:** ${f.confidence} · References: ${f.controls.map((c) => `${c.framework} ${c.control}`).join('; ') || '—'}`,
   ];
+  lines.push(lang === 'ar' ? `- **الحالة:** ${f.status}` : `- **Status:** ${f.status}`);
+  for (const entry of f.retests ?? []) lines.push(`    - ${entry.at} · ${entry.result}`);
   if (f.evidence.length) {
     lines.push(lang === 'ar' ? '- **الدليل:**' : '- **Evidence:**');
     for (const e of f.evidence) lines.push(`    - ${e.label ? `${e.label}: ` : ''}${e.content}`);

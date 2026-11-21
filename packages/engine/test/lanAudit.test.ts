@@ -43,3 +43,16 @@ describe('WiFi posture', () => {
     expect(auditWifiPosture({ security: 'WPA3' })).toEqual([]);
   });
 });
+
+describe('active connection attribution',()=>{
+  it('extracts only the active row including escaped SSID and BSSID',()=>{
+    expect(parseWifiSecurity(String.raw`yes:Office\:Lab:aa\:bb\:cc\:dd\:ee\:ff:WEP
+no:Nearby:ee\:bb\:cc\:dd\:ee\:ff:WPA3`)).toMatchObject({ssid:'Office:Lab',security:'WEP',bssid:'aa:bb:cc:dd:ee:ff'});
+  });
+  it.each(['','no:Nearby:WPA3','yes:a:WPA2\nyes:b:WPA3','SSID: Home\nAuthentication: unrecognized','State: disconnected\nSSID: old\nAuthentication: WPA3'])('returns unknown if evidence is insufficient',data=>{
+    expect(parseWifiSecurity(data).security).toBeUndefined();
+  });
+  it('uses an empty NetworkManager SECURITY field for an open active network',()=>{
+    expect(parseWifiSecurity('yes:Office:').security).toBe('Open');
+  });
+});

@@ -30,7 +30,7 @@ export type ControlRef = z.infer<typeof ControlRef>;
 
 export const Retest = z.object({
   at: z.string().datetime(),
-  result: z.enum(['fixed', 'still_open']),
+  result: z.enum(['fixed', 'still_open', 'inconclusive']),
   note: z.string().optional(),
 });
 

@@ -77,3 +77,12 @@ SecScan tests systems and apps **you own or are authorized to test**,
 non-destructively. It does not include tools whose purpose is attacking other
 people's systems or software (cracking/bypassing other apps, cutting other
 people's network access).
+
+## Assessment projects
+
+Open **Assessment projects** in the web console to plan cases, import evidence,
+review observations, assign remediation, retest and publish report snapshots
+in Arabic and English. Local project revisions persist in `~/.secscan/projects`.
+The shared API uses PostgreSQL when configured. See
+[the implementation and acceptance plan](docs/assessment-platform.md) for setup,
+supported evidence formats, operator roles and the field pilot.

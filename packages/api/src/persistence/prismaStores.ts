@@ -5,7 +5,7 @@
  */
 import { PrismaPg } from '@prisma/adapter-pg';
 import type { AuthorizationGrant, AuthorizationChainLink } from '@secscan/engine';
-import type { Engagement, Finding } from '@secscan/shared';
+import type { Engagement, Finding, Project } from '@secscan/shared';
 import { PrismaClient, type Prisma } from '../generated/prisma/client';
 import type { AuditEntry, AuditInput, AuditStore } from '../core/audit';
 import type { OwnerChallenge, OwnerChallengeStore } from '../core/ownerSignature';
@@ -125,6 +125,13 @@ function toEngagement(r: Prisma.EngagementGetPayload<object>): Engagement {
 
 export class PrismaScanRepo implements ScanRepo {
   constructor(private db: Db) {}
+
+  async appendRetest(scanId:string,findingId:string,entry:Finding['retests'][number]) {
+    const count=await this.db.$executeRaw`UPDATE "Finding" SET "retests"="retests" || ${JSON.stringify([entry])}::jsonb,
+      "status"=CASE WHEN ${entry.result}='still_open' THEN 'open' ELSE "status" END
+      WHERE "scanId"=${scanId} AND "id"=${findingId} AND NOT "reviewQueue"`;
+    if (!count) throw new Error('finding not found');
+  }
 
   async save(s: ScanRecord): Promise<void> {
     const data = {
@@ -273,6 +280,21 @@ export function createPrismaStores(databaseUrl: string): PrismaStoresHandle {
   return {
     db,
     stores: {
+      projects: {
+        async list() {
+          const rows = await db.assessmentProject.findMany({select:{document:true}});
+          return rows.map((row:{document:unknown}) => row.document as Project);
+        },
+        async get(id) {
+          const row = await db.assessmentProject.findUnique({where:{id}});
+          return row?.document as Project | undefined;
+        },
+        async save(project, previous) {
+          const data = { revision:project.revision, document:project as unknown as Prisma.InputJsonValue };
+          if (!previous) return (await db.assessmentProject.createMany({data:[{id:project.id,...data}],skipDuplicates:true})).count === 1;
+          return (await db.assessmentProject.updateMany({where:{id:project.id,revision:previous},data})).count === 1;
+        },
+      },
       grants: new PrismaGrantRepo(db),
       engagements: new PrismaEngagementRepo(db),
       scans: new PrismaScanRepo(db),
