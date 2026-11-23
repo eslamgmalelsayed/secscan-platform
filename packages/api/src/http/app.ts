@@ -34,9 +34,13 @@ export async function buildApp(opts: CoreOptions): Promise<NestFastifyApplicatio
     app.getHttpAdapter().getInstance().addHook('onRequest', async (request: any, reply: any) => {
       const path = String(request.url ?? '').split('?')[0];
       if (PUBLIC_ROUTES.has(`${request.method} ${path}`)) return;
+      const projectRoute = /^\/assessments(?:\/|$)/.test(path);
+      // OIDC only covers project routes. Without API tokens the other routes keep
+      // the access rules they had before OIDC was configured.
+      if (!apiAuth && !projectRoute) return;
       const header=request.headers.authorization;
       let who=apiAuth ? authenticate(apiAuth,header) : null;
-      if (!who && oidc && /^\/assessments(?:\/|$)/.test(path)) who=await oidc(header);
+      if (!who && oidc && projectRoute) who=await oidc(header);
 
       if (!who) {
         reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'authentication required', statusCode: 401 });

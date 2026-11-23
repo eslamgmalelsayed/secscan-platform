@@ -116,19 +116,14 @@ async function change(action: Operation) {
   project.value = await call<Project>('POST', '/assessments/' + p.id, { revision: p.revision, action });
 }
 async function plan() {
+  const known = new Set(project.value!.cases.map((c) => c.id));
   await change({
     type: 'plan',
     cases: [{ domain: domain.value, asset: asset.value, title: title.value, expected: expected.value }],
   });
-  chooseCase(
-    project.value!.cases.find(
-      (c) =>
-        c.title === title.value &&
-        c.expected === expected.value &&
-        c.asset === asset.value &&
-        c.domain === domain.value,
-    )!.id,
-  );
+  // The server trims and de-duplicates, so find the new case by id, not by text.
+  const added = project.value!.cases.find((c) => !known.has(c.id));
+  if (added) chooseCase(added.id);
   title.value = '';
   expected.value = '';
 }

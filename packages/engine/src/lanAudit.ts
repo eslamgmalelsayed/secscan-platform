@@ -81,7 +81,9 @@ export function parseWifiSecurity(text: string): WifiInfo {
     return matches.length === 1 ? matches[0][1].trim().replace(/^"|"$/g, '') : undefined;
   };
   const ssid = field('SSID|ESSID');
-  if (!ssid || ssid === '--' || (field('State') && field('State')?.toLowerCase() !== 'connected')) return {};
+  // netsh reports an associated interface as "connected"; macOS airport as "running".
+  const state = field('State')?.toLowerCase();
+  if (!ssid || ssid === '--' || (state && state !== 'connected' && state !== 'running')) return {};
   const cipher = field('Cipher');
   return { ssid, bssid: field('BSSID|AP BSSID'), security: cipher && /^WEP/i.test(cipher) ? 'WEP' : knownSecurity(field('Security|Authentication|Auth|link auth')),
     wps: /^(on|enabled|configured)$/i.test(field('WPS') ?? '') || undefined };

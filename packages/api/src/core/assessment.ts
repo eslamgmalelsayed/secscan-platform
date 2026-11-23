@@ -47,6 +47,12 @@ function redact(value: string) {
     .replace(/\bBearer\s+[a-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
     .replace(/([?&](?:access_token|api_key|token|password)=)[^&#\s]+/gi, '$1[redacted]');
 }
+// Imported titles can exceed the 240-character label limit (long file paths or
+// routes). Keep both ends: the rule or method at the start, the line at the end.
+function fitTitle(value: string) {
+  const title = value.trim();
+  return title.length <= 240 ? title : title.slice(0, 120).trimEnd() + ' … ' + title.slice(-117).trimStart();
+}
 const memberRole = (p: Project, actor: string) =>
   p.owner === actor ? 'owner' : p.members.find((m) => m.name === actor)?.role;
 function ensureCase(p: Project, data: CaseInput) {
@@ -166,7 +172,7 @@ export class Assessments {
         entries.length +
         ' supported entries';
       for (const row of entries) {
-        const parsed = caseInput.parse({ ...row, title: redact(row.title) });
+        const parsed = caseInput.parse({ ...row, title: fitTitle(redact(row.title)) });
         const item = ensureCase(p, parsed);
         if (!row.outcome || !row.evidence) continue;
         const observation = {

@@ -260,3 +260,28 @@ describe('project evidence access', () => {
     expect((await svc.get('owner', p.id)).history.at(-1)?.action).toContain('attachment access');
   });
 });
+
+describe('import titles longer than the label limit', () => {
+  it('records the row with a shortened title that keeps the rule and line', async () => {
+    const f = await fixture();
+    const uri = 'src/' + 'deep/'.repeat(60) + 'file.ts';
+    const result = (startLine: number) => ({
+      ruleId: 'js/sql-injection',
+      message: { text: 'Tainted query' },
+      locations: [{ physicalLocation: { artifactLocation: { uri }, region: { startLine } } }],
+    });
+    await f.change({
+      type: 'import',
+      format: 'sarif',
+      asset: 'demo',
+      context: 'commit abc',
+      data: { version: '2.1.0', runs: [{ tool: { driver: { name: 'scanner' } }, results: [result(7), result(912)] }] },
+    });
+    const titles = f.p.cases.slice(1).map((c) => c.title);
+    expect(titles).toHaveLength(2);
+    for (const title of titles) expect(title.length).toBeLessThanOrEqual(240);
+    expect(titles[0].startsWith('js/sql-injection')).toBe(true);
+    expect(titles[0].endsWith('file.ts#7')).toBe(true);
+    expect(titles[1].endsWith('file.ts#912')).toBe(true);
+  });
+});
