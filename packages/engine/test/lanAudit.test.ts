@@ -43,3 +43,21 @@ describe('WiFi posture', () => {
     expect(auditWifiPosture({ security: 'WPA3' })).toEqual([]);
   });
 });
+
+describe('active connection attribution',()=>{
+  it('extracts only the active row including escaped SSID and BSSID',()=>{
+    expect(parseWifiSecurity(String.raw`yes:Office\:Lab:aa\:bb\:cc\:dd\:ee\:ff:WEP
+no:Nearby:ee\:bb\:cc\:dd\:ee\:ff:WPA3`)).toMatchObject({ssid:'Office:Lab',security:'WEP',bssid:'aa:bb:cc:dd:ee:ff'});
+  });
+  it.each(['','no:Nearby:WPA3','yes:a:WPA2\nyes:b:WPA3','SSID: Home\nAuthentication: unrecognized','State: disconnected\nSSID: old\nAuthentication: WPA3'])('returns unknown if evidence is insufficient',data=>{
+    expect(parseWifiSecurity(data).security).toBeUndefined();
+  });
+  it('reads a connected macOS airport interface, and rejects one that is not associated',()=>{
+    const airport=(state:string)=>`     agrCtlRSSI: -52\n     state: ${state}\n     op mode: station\n     802.11 auth: open\n     link auth: wpa2-psk\n     BSSID: aa:bb:cc:dd:ee:ff\n     SSID: Office\n     channel: 36`;
+    expect(parseWifiSecurity(airport('running'))).toMatchObject({ssid:'Office',bssid:'aa:bb:cc:dd:ee:ff',security:'wpa2-psk'});
+    expect(parseWifiSecurity(airport('init')).security).toBeUndefined();
+  });
+  it('uses an empty NetworkManager SECURITY field for an open active network',()=>{
+    expect(parseWifiSecurity('yes:Office:').security).toBe('Open');
+  });
+});

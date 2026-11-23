@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { api, settings, saveSettings, type Health } from './api';
+import Assessments from './views/Assessments.vue';
+import { login, logout, projectLoginEnabled, projectUser, setupProjectLogin } from './projectLogin';
 import Overview from './views/Overview.vue';
 import Grants from './views/Grants.vue';
 import ScanSetup from './views/ScanSetup.vue';
 import Results from './views/Results.vue';
 import Network from './views/Network.vue';
 import Accounts from './views/Accounts.vue';
-import { toast } from './toast';
+import { toast, notify } from './toast';
 
-type View = 'overview' | 'grants' | 'scan' | 'results' | 'network' | 'accounts';
+type View = 'assessments' | 'overview' | 'grants' | 'scan' | 'results' | 'network' | 'accounts';
 const view = ref<View>('overview');
 const health = ref<Health | null>(null);
 const apiDown = ref(false);
@@ -19,8 +21,9 @@ async function refreshHealth() {
   try { health.value = await api.health(); apiDown.value = false; }
   catch { apiDown.value = true; }
 }
-onMounted(() => { refreshHealth(); setInterval(refreshHealth, 10_000); });
+onMounted(() => { setupProjectLogin().then(()=>{if(projectUser.value) view.value='assessments';}).catch(e=>notifyLoginError(e)); refreshHealth(); setInterval(refreshHealth, 10_000); });
 
+function notifyLoginError(e:unknown) { notify(e instanceof Error ? e.message : String(e),true); }
 function openScan(id: string) { selectedScan.value = id; view.value = 'results'; }
 
 const theme = ref<'light' | 'dark'>(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
@@ -31,6 +34,7 @@ function toggleTheme() {
 }
 
 const nav: { id: View; label: string; step: number }[] = [
+  { id: 'assessments', label: 'Assessment projects', step: 0 },
   { id: 'overview', label: 'Overview', step: 0 },
   { id: 'grants', label: 'Authorization', step: 1 },
   { id: 'scan', label: 'Scan setup', step: 2 },
@@ -53,6 +57,7 @@ const nav: { id: View; label: string; step: number }[] = [
         </button>
       </nav>
       <div class="card" style="margin-top: 18px; padding: 12px">
+        <div v-if="projectLoginEnabled"><button v-if="!projectUser" class="btn" @click="login().catch(notifyLoginError)">Sign in to projects</button><button v-else class="btn" @click="logout().then(()=>view='overview')">Sign out · {{projectUser}}</button></div>
         <label style="margin-top: 0">Actor (for the audit log)</label>
         <input v-model="settings.actor" @change="saveSettings()" />
         <label>API token <span v-if="health?.apiTokenRequired" class="chip warn">required</span></label>
@@ -73,6 +78,7 @@ const nav: { id: View; label: string; step: number }[] = [
 
     <main class="main">
       <Overview v-if="view === 'overview'" :health="health" @go="(v: View) => view = v" @open-scan="openScan" />
+      <Assessments v-else-if="view === 'assessments'" />
       <Grants v-else-if="view === 'grants'" />
       <ScanSetup v-else-if="view === 'scan'" @open-scan="openScan" />
       <Network v-else-if="view === 'network'" @open-scan="openScan" />

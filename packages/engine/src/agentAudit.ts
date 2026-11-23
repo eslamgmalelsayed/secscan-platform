@@ -34,9 +34,13 @@ function sh(cmd: string): string {
   try { return execSync(cmd, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 8000 }); } catch { return ''; }
 }
 function wifiCommand(): string {
-  if (process.platform === 'darwin') return sh('/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I') || sh('system_profiler SPAirPortDataType');
+  if (process.platform === 'darwin') return sh('/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I');
   if (process.platform === 'win32') return sh('netsh wlan show interfaces');
-  return sh('nmcli -t -f ACTIVE,SSID,SECURITY dev wifi') || sh('iwconfig');
+  return sh('LC_ALL=C nmcli -t -f ACTIVE,SSID,BSSID,SECURITY dev wifi') || sh('iwconfig');
+}
+
+export function wifiSnapshot() {
+  return { at:new Date().toISOString(), platform:process.platform, wifi:parseWifiSecurity(wifiCommand()) };
 }
 
 export async function runAgentAudit(opts: AgentAuditOptions = {}): Promise<AgentAuditResult> {
@@ -50,7 +54,7 @@ export async function runAgentAudit(opts: AgentAuditOptions = {}): Promise<Agent
   const gateway = opts.gateway ?? entries.find((e) => /\.1$/.test(e.ip))?.ip;
   const network = detectArpSpoof(entries, gateway);
 
-  const wifi = parseWifiSecurity(wifiCommand());
+  const {wifi} = wifiSnapshot();
   const wifiFindings = auditWifiPosture(wifi);
 
   return { platform: process.platform, cidr, devices, arpEntries: entries.length, gateway, network, wifi, wifiFindings };

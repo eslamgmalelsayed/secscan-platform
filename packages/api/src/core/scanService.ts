@@ -215,7 +215,7 @@ export class ScanService {
       const notTested = [...new Set([...skipped, ...result.notTested, ...checksNotes, ...client.refused.map((r) => `${r.decision}: ${r.reason}`)])];
       if (stopped) notTested.push('stopped by operator: results are partial');
       const scan: ScanRecord = {
-        id: scanId, engagementId: req.engagementId, grantId: req.grantId, status: 'done',
+        id: scanId, engagementId: req.engagementId, grantId: req.grantId, status: stopped ? 'partial' : 'done',
         findings, review, notTested,
         telemetry: {
           confirmedFindings: findings.length, needsReview: result.needsReview.length + checksReview,

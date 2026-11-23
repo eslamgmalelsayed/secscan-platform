@@ -26,7 +26,7 @@ export class ReportService {
     const engagement = await this.engagements.get(engagementId);
     if (!engagement) throw new Error(`engagement ${engagementId} not found`);
     const scan = await this.scans.get(scanId);
-    if (!scan) throw new Error(`scan ${scanId} not found`);
+    if (!scan || scan.engagementId !== engagementId) throw new Error(`scan ${scanId} not found`);
     const input: ReportInput = { engagement: engagement as Engagement, findings: [...scan.findings, ...(scan.review ?? [])] };
     return renderMarkdown(input, { lang, notTested: scan.notTested });
   }
@@ -35,7 +35,7 @@ export class ReportService {
     const engagement = await this.engagements.get(engagementId);
     if (!engagement) throw new Error(`engagement ${engagementId} not found`);
     const scan = await this.scans.get(scanId);
-    if (!scan) throw new Error(`scan ${scanId} not found`);
+    if (!scan || scan.engagementId !== engagementId) throw new Error(`scan ${scanId} not found`);
     return {
       generatedAt: new Date().toISOString(),
       engagement: engagement as Engagement,

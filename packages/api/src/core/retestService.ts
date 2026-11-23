@@ -11,7 +11,7 @@ import type { ScanRequest, ScanService } from './scanService';
 
 export interface RetestResult {
   findingId: string;
-  result: 'fixed' | 'still_open';
+  result: 'fixed' | 'still_open' | 'inconclusive';
   at: string;
   retestScanId: string;
 }
@@ -25,14 +25,15 @@ export class RetestService {
     const finding = original.findings.find((f) => f.id === findingId);
     if (!finding) throw new Error(`finding ${findingId} not found in scan ${originalScanId}`);
 
+    if (original.engagementId !== req.engagementId || original.grantId !== req.grantId) {
+      throw new Error('retest must use the original engagement and grant');
+    }
     const fresh = await this.scanService.run(req); // its own scan record
-    const stillPresent = fresh.findings.some((f) => f.id === findingId);
+    const stillPresent = fresh.findings.some(f => f.id === findingId && f.asset === finding.asset && f.location === finding.location);
     const at = new Date().toISOString();
-    const result: 'fixed' | 'still_open' = stillPresent ? 'still_open' : 'fixed';
-
-    finding.retests = [...(finding.retests ?? []), { at, result }];
-    if (result === 'fixed') finding.status = 'fixed';
-    await this.scans.save(original);
+    // A missing finding is not evidence that the protected behavior was exercised.
+    const result = stillPresent ? 'still_open' : 'inconclusive';
+    await this.scans.appendRetest(originalScanId,findingId,{at,result,note:fresh.id});
 
     return { findingId, result, at, retestScanId: fresh.id };
   }

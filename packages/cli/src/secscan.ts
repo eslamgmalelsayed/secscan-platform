@@ -11,7 +11,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fromHar, fromOpenApi } from '@secscan/importers';
-import { discoverServices, runAgentAudit, type RecordedRequest } from '@secscan/engine';
+import { discoverServices, runAgentAudit, wifiSnapshot, type RecordedRequest } from '@secscan/engine';
 import { runScan } from './run';
 
 type Args = Record<string, string | boolean>;
@@ -35,6 +35,7 @@ const USAGE = `secscan — authorized, non-destructive local scanner
 
   secscan quick <url>       one step: crawl the public surface and scan it
                             (add --identities to cover logins + enable IDOR)
+  secscan wifi              export current WiFi posture as JSON
   secscan services <host>   non-destructive connect scan of an owned host
   secscan agent             on-network audit: LAN devices + ARP-spoof + WiFi posture
 
@@ -61,6 +62,7 @@ async function main() {
   const { cmd, args, positionals } = parse(process.argv.slice(2));
   if (cmd === 'quick') return quick(positionals[0] ?? (args.url as string), args);
   if (cmd === 'services') return services(positionals[0] ?? (args.host as string), args);
+  if (cmd === 'wifi') { console.log(JSON.stringify(wifiSnapshot())); return; }
   if (cmd === 'agent') return agent(args);
   if (cmd === 'help' || args.help || (cmd !== 'scan')) { console.log(USAGE); process.exit(cmd === 'scan' || cmd === 'help' ? 0 : 1); }
 
@@ -151,7 +153,8 @@ async function agent(args: Args) {
   for (const f of r.network) console.log(`  ! [${f.severity}] ${f.title} — ${f.detail}`);
 
   console.log(`\n[wifi] ${r.wifi.ssid ? `SSID '${r.wifi.ssid}'` : 'network'}${r.wifi.security ? ` — ${r.wifi.security}` : ''}`);
-  if (!r.wifiFindings.length) console.log('  posture looks fine');
+  if (!r.wifi.security) console.log('  inconclusive: active connection security unavailable');
+  else if (!r.wifiFindings.length) console.log('  no configured WiFi check flagged this connection');
   for (const f of r.wifiFindings) console.log(`  ! [${f.severity}] ${f.title} — ${f.detail}`);
 
   console.log(`\n[secscan] agent done — ${r.network.length + r.wifiFindings.length} network finding(s).`);

@@ -63,8 +63,9 @@ const sevClass = (s: string) => (s === 'critical' || s === 'high' ? 'bad' : s ==
 
         <div class="card">
           <h3>WiFi posture</h3>
-          <p class="sub">{{ audit.wifi.ssid ? `SSID: ${audit.wifi.ssid}` : 'No WiFi info' }}<span v-if="audit.wifi.security"> · {{ audit.wifi.security }}</span></p>
-          <div v-if="!audit.wifiFindings.length && !audit.network.length" class="chip ok" style="margin-top: 8px">no issues found</div>
+          <p class="sub">{{ audit.wifi.ssid ? `SSID: ${audit.wifi.ssid}` : 'No WiFi info' }}<span v-if="audit.wifi.security"> · {{ audit.wifi.security }}</span> <span v-if="audit.wifi.bssid">· {{ audit.wifi.bssid }}</span></p>
+          <div v-if="!audit.wifi.security" class="chip warn">Inconclusive · active WiFi security unavailable</div>
+          <div v-else-if="!audit.wifiFindings.length" class="chip ok" style="margin-top: 8px">No configured WiFi check flagged this connection</div>
         </div>
       </div>
 

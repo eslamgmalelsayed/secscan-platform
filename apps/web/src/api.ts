@@ -1,3 +1,4 @@
+import { projectToken } from './projectLogin';
 /** Thin client for the SecScan API (proxied under /api by Vite). */
 import { reactive } from 'vue';
 
@@ -16,13 +17,14 @@ export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const token = (path.startsWith('/assessments') ? await projectToken() : undefined) ?? settings.apiToken;
   const res = await fetch(`/api${path}`, {
     method,
     headers: {
       'content-type': 'application/json',
       // Bearer token for every non-public route when API auth is configured.
-      ...(settings.apiToken ? { authorization: `Bearer ${settings.apiToken}` } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(settings.adminToken ? { 'x-admin-token': settings.adminToken } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -95,7 +97,7 @@ export interface AgentAudit {
   platform: string; cidr?: string; arpEntries: number; gateway?: string;
   devices: { host: string; ports: number[] }[];
   network: LanFinding[];
-  wifi: { ssid?: string; security?: string; wps?: boolean };
+  wifi: { ssid?: string; bssid?: string; security?: string; wps?: boolean };
   wifiFindings: LanFinding[];
 }
 export interface Identity { role: string; tenant?: string | null; sessionRef?: string | null }

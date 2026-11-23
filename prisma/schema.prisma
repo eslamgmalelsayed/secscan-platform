@@ -163,3 +163,9 @@ model AuditEntry {
 
   @@index([grantId, seq])
 }
+
+model AssessmentProject {
+  id       String @id
+  revision Int
+  document Json
+}

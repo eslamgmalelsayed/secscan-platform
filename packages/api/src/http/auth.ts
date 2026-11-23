@@ -49,4 +49,4 @@ export function authenticate(auth: ApiAuth, authorizationHeader: string | undefi
   return who;
 }
 
-export const PUBLIC_ROUTES = new Set(['GET /health']);
+export const PUBLIC_ROUTES = new Set(['GET /health', 'GET /project-login']);

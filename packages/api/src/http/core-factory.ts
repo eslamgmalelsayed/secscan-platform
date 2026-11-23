@@ -1,3 +1,5 @@
+import { s3Attachments, type AttachmentStore } from '../persistence/attachments';
+import { Assessments, MemoryProjectStore, type ProjectStore } from '../core/assessment';
 /** Builds the core service graph used by both the HTTP app and the smoke test. */
 import type { HostResolver, Identity, OwnershipDeps, PacingOptions, Sender, SecretStore, SessionMaterial } from '@secscan/engine';
 import {
@@ -10,6 +12,7 @@ import type { ApiAuth } from './auth';
 
 /** Where state lives. Omit for in-memory (tests, quick local runs). */
 export interface CoreStores {
+  projects?: ProjectStore;
   grants: GrantRepo;
   engagements: EngagementRepo;
   scans: ScanRepo;
@@ -18,6 +21,9 @@ export interface CoreStores {
 }
 
 export interface CoreOptions {
+  localProjectAccess?: boolean;
+  attachments?: AttachmentStore;
+  projects?: ProjectStore;
   lab: LabPolicy;
   sender: Sender;
   fingerprintSecret: string;
@@ -49,6 +55,8 @@ export interface CoreOptions {
 }
 
 export interface CoreGraph {
+  localProjectAccess: boolean;
+  assessments: Assessments;
   audit: AuditStore;
   grants: GrantRepo;
   engagements: EngagementRepo;
@@ -95,6 +103,8 @@ export function buildCore(opts: CoreOptions): CoreGraph {
   const report = new ReportService(s.engagements, s.scans);
   const retest = new RetestService(s.scans, scan);
   return {
+    localProjectAccess: opts.localProjectAccess ?? !!opts.devTrust,
+    assessments: new Assessments(opts.projects ?? opts.stores?.projects ?? new MemoryProjectStore(), opts.attachments ?? s3Attachments()),
     audit: s.audit, grants: s.grants, engagements: s.engagements, scans: s.scans,
     auth, scan, report, retest, lab: opts.lab, ownership: opts.ownership,
     adminToken: opts.adminToken, apiAuth: opts.auth, ownerEmailEnabled: !!opts.mailer,

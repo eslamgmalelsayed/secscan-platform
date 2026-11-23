@@ -15,10 +15,10 @@ import { createReadStream, existsSync, statSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { buildApp, LabPolicy } from '@secscan/api';
+import { buildApp, FileProjects, LabPolicy, parseApiTokens } from '@secscan/api';
 import { createHttpSender, SecretStore, loadIdentities } from '@secscan/engine';
 import { readFileSync } from 'node:fs';
-import { networkInterfaces } from 'node:os';
+import { homedir, networkInterfaces } from 'node:os';
 
 function localLanIp() {
   for (const addrs of Object.values(networkInterfaces())) for (const a of addrs ?? []) {
@@ -51,7 +51,12 @@ export async function startServer(opts = {}) {
   const idFile = opts.identitiesFile ?? resolve(root, 'identities.json');
   const loaded = existsSync(idFile) ? loadIdentities(JSON.parse(readFileSync(idFile, 'utf-8')), store) : null;
 
+  const host = opts.host ?? process.env.SECSCAN_HOST ?? '127.0.0.1';
+  const isLoopback = ['127.0.0.1','localhost','::1'].includes(host);
+  const namedAuth = parseApiTokens(process.env.SECSCAN_API_TOKENS);
   const api = await buildApp({
+    projects: new FileProjects(process.env.SECSCAN_PROJECT_DIR || resolve(homedir(), '.secscan', 'projects')),
+    auth: namedAuth, localProjectAccess: isLoopback && !process.env.SECSCAN_OIDC_ISSUER,
     lab: new LabPolicy(false, [], { allowPrivateTargets: true }),
     sender: createHttpSender({ store }),
     fingerprintSecret: randomBytes(24).toString('hex'),
@@ -76,8 +81,7 @@ export async function startServer(opts = {}) {
   // off-loopback we REQUIRE an access token for the console + /api; only the
   // receiver (/display) and its SSE stream stay open so devices can still
   // receive broadcasts. On loopback, no token is needed.
-  const host = opts.host ?? process.env.SECSCAN_HOST ?? '127.0.0.1';
-  const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+
   const accessToken = process.env.SECSCAN_ACCESS_TOKEN;
   if (!isLoopback && !accessToken) {
     throw new Error(`refusing to bind to ${host}: that exposes the no-auth dev-trust console on the network. Set SECSCAN_ACCESS_TOKEN=<secret> to allow it (then open the URL with ?token=<secret>), or keep the default loopback bind.`);
@@ -103,6 +107,9 @@ export async function startServer(opts = {}) {
       }
     }
 
+    if (!isLoopback && !namedAuth && !process.env.SECSCAN_OIDC_ISSUER && /^\/api\/assessments(?:\/|$)/.test(url.pathname)) {
+      res.writeHead(403); return res.end('Named API tokens required for shared projects');
+    }
     if (url.pathname === '/api/messages/stream' && req.method === 'GET') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
       res.write('retry: 2000\n\n');
@@ -164,7 +171,7 @@ export async function startServer(opts = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { url, host } = await startServer();
   console.log(`[serve] SecScan running at ${url} (single process, dev-trust)`);
-  console.log('[serve] state is IN MEMORY — grants, scans and history are lost on restart. Use the Postgres path (npm run local -- --full) to persist.');
+  console.log('[serve] assessment projects persist on disk; grants and legacy scans are in memory and lost on restart. Use the Postgres path (npm run local -- --full) to persist.');
   if (host !== '127.0.0.1' && host !== 'localhost' && host !== '::1') {
     console.log('[serve] exposed on the network: open the console with ?token=<SECSCAN_ACCESS_TOKEN>; /display stays open for receivers.');
   }

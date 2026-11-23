@@ -222,7 +222,7 @@ describe('operator stop (gap 3)', () => {
       engagementId: 'E1', grantId: 'g1', flows: [flow], identities: [alice, bob], actor: 'admin',
       signal: ac.signal, skipChecks: true,
     });
-    expect(scan.status).toBe('done');
+    expect(scan.status).toBe('partial');
     expect(scan.telemetry?.stopped).toBe(1);
     expect(scan.notTested.some((n) => n.includes('stopped'))).toBe(true);
   });
@@ -254,11 +254,11 @@ describe('retests (gap 4) + evidence bundle (gap 7)', () => {
 
     fixed = true;
     const res = await new RetestService(scans, svc).retest(scan.id, finding.id, req);
-    expect(res.result).toBe('fixed');
+    expect(res.result).toBe('inconclusive');
     const updated = await scans.get(scan.id);
     const back = updated!.findings.find((f) => f.id === finding.id)!;
     expect(back.retests?.length).toBe(1);
-    expect(back.retests?.[0].result).toBe('fixed');
-    expect(back.status).toBe('fixed');
+    expect(back.retests?.[0].result).toBe('inconclusive');
+    expect(back.status).toBe('open');
   });
 });
