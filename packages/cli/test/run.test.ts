@@ -27,7 +27,7 @@ const identitiesFile = {
 describe('runScan (one-command, injected sender)', () => {
   it('walks the lifecycle, finds the IDOR, and writes both reports', async () => {
     const res = await runScan(
-      { host: HOST, root: `https://${HOST}/`, flows, identitiesFile, allowPrivate: true },
+      { host: HOST, root: `https://${HOST}/`, flows, identitiesFile, allowPrivate: true, rps: 0 },
       { sender: vulnApp, fingerprintSecret: 'test-secret' },
     );
     expect(res.status).toBe('done');
@@ -40,7 +40,7 @@ describe('runScan (one-command, injected sender)', () => {
 
   it('runs anonymously with no identities: no false IDOR (scorecard findings still allowed)', async () => {
     const res = await runScan(
-      { host: HOST, root: `https://${HOST}/`, flows, allowPrivate: true },
+      { host: HOST, root: `https://${HOST}/`, flows, allowPrivate: true, rps: 0 },
       { sender: vulnApp, fingerprintSecret: 'test-secret' },
     );
     expect(res.status).toBe('done');
@@ -61,7 +61,7 @@ describe('runScan (one-command, injected sender)', () => {
       return json(404, '{}');
     };
     const res = await runScan(
-      { host: HOST, root: `https://${HOST}/`, flows: [], discover: { maxPages: 10 }, allowPrivate: true },
+      { host: HOST, root: `https://${HOST}/`, flows: [], discover: { maxPages: 10 }, allowPrivate: true, rps: 0 },
       { sender: site, fingerprintSecret: 'test-secret' },
     );
     expect(res.status).toBe('done');
@@ -83,7 +83,7 @@ describe('runScan (one-command, injected sender)', () => {
       return json(404, '{}');
     };
     const res = await runScan(
-      { host: HOST, root: `https://${HOST}/`, flows: [], discover: { maxPages: 10 }, identitiesFile, allowPrivate: true },
+      { host: HOST, root: `https://${HOST}/`, flows: [], discover: { maxPages: 10 }, identitiesFile, allowPrivate: true, rps: 0 },
       { sender: app, fingerprintSecret: 'test-secret' },
     );
     expect(res.status).toBe('done');

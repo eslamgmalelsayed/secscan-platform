@@ -103,7 +103,7 @@ export async function tlsRedirect(ctx: CheckContext): Promise<Finding[]> {
 }
 
 const LEAKY = ['server', 'x-powered-by', 'x-aspnet-version', 'x-generator'];
-const STACK = ['traceback (most recent call last)', 'java.lang.', 'at org.springframework', 'you have an error in your sql syntax', 'system.web.'];
+export const STACK = ['traceback (most recent call last)', 'java.lang.', 'at org.springframework', 'you have an error in your sql syntax', 'system.web.'];
 
 export async function infoDisclosure(ctx: CheckContext): Promise<Finding[]> {
   const resp = await fetchRoot(ctx);
@@ -150,7 +150,7 @@ const SECRET_PATTERNS: [RegExp, string][] = [
 ];
 
 /** Same-origin <script src> URLs on the root page, resolved and capped. */
-function sameOriginScripts(html: string, rootUrl: string, max = 10): string[] {
+export function sameOriginScripts(html: string, rootUrl: string, max = 10): string[] {
   const origin = new URL(rootUrl).origin;
   const urls: string[] = [];
   const re = /<script[^>]+src\s*=\s*["']([^"']+)["']/gi;
