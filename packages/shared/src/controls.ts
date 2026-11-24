@@ -10,7 +10,9 @@ export type FindingCategory =
   | 'access_control' | 'function_level' | 'missing_auth' | 'mass_assignment'
   | 'injection' | 'xss' | 'open_redirect' | 'csrf' | 'rate_limit'
   | 'cors' | 'security_header' | 'insecure_cookie' | 'tls' | 'info_disclosure'
-  | 'secret_exposure' | 'jwt';
+  | 'secret_exposure' | 'jwt'
+  | 'exposed_file' | 'debug_mode' | 'api_inventory' | 'error_handling' | 'websocket'
+  | 'service_exposure' | 'email_auth' | 'subdomain_takeover' | 'ci_cd';
 
 const M: Record<FindingCategory, ControlRef[]> = {
   access_control: refs('2-2 / 2-10', 'API1:2023', 'CWE-639', 'V4.1', 'A.8.3', 'PR.AC'),
@@ -29,6 +31,15 @@ const M: Record<FindingCategory, ControlRef[]> = {
   info_disclosure: refs('2-15', 'A05:2021', 'CWE-200', 'V14.3', 'A.8.11', 'PR.DS'),
   secret_exposure: refs('2-15', 'A05:2021', 'CWE-200', 'V14.3', 'A.8.12', 'PR.DS'),
   jwt: refs('2-2', 'API2:2023', 'CWE-347', 'V3.5', 'A.8.5', 'PR.AC'),
+  exposed_file: refs('2-15', 'A05:2021', 'CWE-538', 'V14.3', 'A.8.12', 'PR.DS'),
+  debug_mode: refs('2-15', 'A05:2021', 'CWE-489', 'V14.3', 'A.8.9', 'PR.IP'),
+  api_inventory: refs('2-2', 'API9:2023', 'CWE-1059', 'V1.1', 'A.5.9', 'ID.AM'),
+  error_handling: refs('2-15', 'A10:2025', 'CWE-755', 'V7.4', 'A.8.28', 'PR.IP'),
+  websocket: refs('2-15', 'A01:2021', 'CWE-1385', 'V14.5', 'A.8.26', 'PR.AC'),
+  service_exposure: refs('2-15', 'A05:2021', 'CWE-200', 'V14.3', 'A.8.9', 'PR.IP'),
+  email_auth: refs('2-4', 'A05:2021', 'CWE-290', 'V14.1', 'A.5.14', 'PR.DS'),
+  subdomain_takeover: refs('2-15', 'A05:2021', 'CWE-284', 'V14.1', 'A.8.20', 'ID.AM'),
+  ci_cd: refs('2-6', 'CICD-SEC-4', 'CWE-78', 'V14.2', 'A.8.25', 'PR.IP'),
 };
 
 function refs(ecc: string, owasp: string, cwe: string, asvs: string, iso: string, nist: string): ControlRef[] {

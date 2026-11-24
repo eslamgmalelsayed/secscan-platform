@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@secscan/api": "*",
+    "@secscan/checks": "*",
     "@secscan/engine": "*",
     "@secscan/importers": "*",
     "@secscan/shared": "*"

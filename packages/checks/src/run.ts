@@ -13,6 +13,9 @@ import { reflectedInput, sqliDifferential } from './active';
 import { ssti, pathTraversal, nosqlDifferential, hostHeaderInjection } from './injection';
 import { graphqlIntrospection, csrfToken, rateLimitAbsence, massAssignment } from './logic';
 import { jwtChecks } from './jwt';
+import { exposedFiles, sourceMaps, apiDocs, frameworkConsoles, debugPages, shadowApiVersions, malformedInput } from './exposure';
+import { tlsPosture, websocketOrigin, grpcReflection } from './transport';
+import { emailSpoofing, danglingCname } from './dnsChecks';
 
 export interface ChecksResult {
   reportReady: Finding[];
@@ -40,12 +43,18 @@ export async function runChecks(ctx: CheckContext, opts: RunChecksOptions = {}):
     ['securityHeaders', run.passive, securityHeaders], ['cookies', run.passive, cookies],
     ['tlsRedirect', run.passive, tlsRedirect], ['infoDisclosure', run.passive, infoDisclosure],
     ['secretsInResponse', run.passive, secretsInResponse], ['weakSessionToken', run.passive, weakSessionToken],
+    ['exposedFiles', run.passive, exposedFiles], ['sourceMaps', run.passive, sourceMaps],
+    ['apiDocs', run.passive, apiDocs], ['frameworkConsoles', run.passive, frameworkConsoles],
+    ['debugPages', run.passive, debugPages], ['tlsPosture', run.passive, tlsPosture],
+    ['emailSpoofing', run.passive, emailSpoofing], ['danglingCname', run.passive, danglingCname],
     ['corsMisconfig', run.config, corsMisconfig], ['openRedirect', run.config, openRedirect],
     ['reflectedInput', run.active, reflectedInput], ['sqliDifferential', run.active, sqliDifferential],
     ['ssti', run.active, ssti], ['pathTraversal', run.active, pathTraversal],
     ['nosqlDifferential', run.active, nosqlDifferential], ['hostHeaderInjection', run.active, hostHeaderInjection],
     ['graphqlIntrospection', run.active, graphqlIntrospection], ['csrfToken', run.active, csrfToken],
     ['rateLimitAbsence', run.active, rateLimitAbsence], ['massAssignment', run.active, massAssignment],
+    ['shadowApiVersions', run.active, shadowApiVersions], ['malformedInput', run.active, malformedInput],
+    ['websocketOrigin', run.config, websocketOrigin], ['grpcReflection', run.config, grpcReflection],
   ];
   for (const [name, enabled, check] of plan) {
     if (!enabled) continue;

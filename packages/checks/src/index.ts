@@ -9,4 +9,8 @@ export * from './mobile';
 export * from './binary';
 export * from './exploit';
 export * from './jwt';
+export * from './exposure';
+export * from './transport';
+export * from './dnsChecks';
+export * from './workflows';
 export * from './run';

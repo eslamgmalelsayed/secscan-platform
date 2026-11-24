@@ -89,6 +89,16 @@ export class ScopeGuard {
     return { ...verdict('allow', 'covered by live grant'), address: addrs[0] };
   }
 
+  /**
+   * Whether a live grant names this host, without resolving it. For DNS-only
+   * checks (mail records, dangling CNAMEs) that never connect to the host.
+   */
+  coversHost(url: string, at: Date = new Date()): boolean {
+    let t;
+    try { t = targetFromUrl(url.replace(/^ws(s?):/i, 'http$1:')); } catch { return false; }
+    return this.grants.some((g) => covers(g, t) && isLive(g, at));
+  }
+
   /** One lookup per host for the lifetime of this guard (= one scan). */
   private resolveOnce(host: string): Promise<string[]> {
     const bare = host.replace(/^\[|\]$/g, '');

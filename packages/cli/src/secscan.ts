@@ -9,7 +9,9 @@
  * --dev-trust is required: it says "I own this target" and auto-walks the
  * authorization lifecycle locally. Without it the command refuses to run.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { analyzeWorkflows } from '@secscan/checks';
 import { fromHar, fromOpenApi } from '@secscan/importers';
 import { discoverServices, runAgentAudit, type RecordedRequest } from '@secscan/engine';
 import { runScan } from './run';
@@ -37,6 +39,7 @@ const USAGE = `secscan — authorized, non-destructive local scanner
                             (add --identities to cover logins + enable IDOR)
   secscan services <host>   non-destructive connect scan of an owned host
   secscan agent             on-network audit: LAN devices + ARP-spoof + WiFi posture
+  secscan workflows [dir]   review GitHub Actions files in <dir>/.github/workflows (default .)
 
 secscan scan — scan from recorded flows
 
@@ -62,6 +65,7 @@ async function main() {
   if (cmd === 'quick') return quick(positionals[0] ?? (args.url as string), args);
   if (cmd === 'services') return services(positionals[0] ?? (args.host as string), args);
   if (cmd === 'agent') return agent(args);
+  if (cmd === 'workflows') return workflows(positionals[0] ?? '.');
   if (cmd === 'help' || args.help || (cmd !== 'scan')) { console.log(USAGE); process.exit(cmd === 'scan' || cmd === 'help' ? 0 : 1); }
 
   const host = args.host as string;
@@ -135,6 +139,18 @@ async function quick(url: string, args: Args) {
  * the ARP table for spoofing signs, and audits the WiFi crypto posture. Audits
  * a network you own; it never attacks other people's gear.
  */
+/** Static review of workflow files on disk; reads only, runs nothing. */
+function workflows(dir: string) {
+  const wfDir = join(dir, '.github', 'workflows');
+  if (!existsSync(wfDir)) fail(`no ${wfDir} directory`);
+  const files = readdirSync(wfDir).filter((n) => /\.ya?ml$/i.test(n))
+    .map((n) => ({ path: `.github/workflows/${n}`, text: readFileSync(join(wfDir, n), 'utf-8') }));
+  const findings = analyzeWorkflows(files);
+  console.log(`[workflows] ${files.length} file(s), ${findings.length} finding(s)`);
+  for (const f of findings) console.log(`  [${f.severity}/${f.confidence}] ${f.location} — ${f.title.en}`);
+  if (findings.some((f) => f.confidence === 'confirmed' && f.severity === 'high')) process.exitCode = 2;
+}
+
 async function agent(args: Args) {
   console.log(`[secscan] agent on ${process.platform} — auditing your own network (non-destructive)`);
   const r = await runAgentAudit({

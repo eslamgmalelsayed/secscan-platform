@@ -8,6 +8,7 @@ import {
   Finding, type Confidence, type Severity, type LocalizedText,
   cvss31, controlsFor, type Cvss31Metrics, type FindingCategory,
 } from '@secscan/shared';
+import type { DnsResolver } from './dnsChecks';
 import { ScopeRefused, type GuardedClient, type Identity, type RecordedRequest, type RecordedResponse } from '@secscan/engine';
 
 export interface CheckContext {
@@ -21,6 +22,8 @@ export interface CheckContext {
    *  that captured the flow (review 2.5), so endpoints behind login are
    *  actually exercised; root scorecard checks stay anonymous. */
   identities?: Identity[];
+  /** DNS resolver for the DNS-only checks; the system resolver when omitted. */
+  dns?: DnsResolver;
 }
 
 export const ANON: Identity = { role: 'anonymous', sessionRef: null };

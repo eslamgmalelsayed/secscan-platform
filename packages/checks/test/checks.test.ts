@@ -39,7 +39,8 @@ function server(): Promise<{ srv: Server; base: string }> {
       return res.end(id.endsWith("'1'='2") ? '{"items":[]}' : '{"items":[{"id":1}]}');
     }
     if (p === '/go') {
-      res.writeHead(302, { location: u.searchParams.get('next') ?? '/' });
+      // Strip control characters so a malformed-input probe cannot crash the fixture.
+      res.writeHead(302, { location: (u.searchParams.get('next') ?? '/').replace(/[\u0000-\u001f]/g, '') });
       return res.end();
     }
     if (p === '/api') {
