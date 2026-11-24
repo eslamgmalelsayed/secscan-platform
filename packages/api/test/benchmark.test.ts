@@ -71,7 +71,8 @@ beforeAll(async () => {
       return me ? json(200, { id: me.id }) : json(401, {});
     }
     // WEAK #5: open redirect
-    if (u.pathname === '/login') { res.writeHead(302, { location: u.searchParams.get('next') ?? '/' }); return res.end(); }
+    // Control characters are stripped so a malformed-input probe cannot crash the fixture.
+    if (u.pathname === '/login') { res.writeHead(302, { location: (u.searchParams.get('next') ?? '/').replace(/[\u0000-\u001f]/g, '') }); return res.end(); }
     res.writeHead(404); res.end();
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
